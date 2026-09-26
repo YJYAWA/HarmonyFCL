@@ -1,0 +1,181 @@
+MobileGlues：移除全部 Vulkan 调用路径，并强制关闭 ANGLE
+=======================================================
+
+基线：MobileGlues 上游 main 分支源码快照（2026-09-23 拉取，version.h 为 2.0.0/RELEASE）
+      （https://github.com/MobileGL-Dev/MobileGlues）
+
+应用方式（在 MobileGlues 仓库根目录、或本仓库的 third_party/MobileGlues/ 下执行）：
+
+    git apply -p1 patches/mobileglues-no-vulkan.patch
+
+改动内容：源码级删除 Vulkan 运行时路径，不是配置级开关。
+
+  1. config/gpu_utils.cpp：删掉 #include "vulkan/vulkan.h" 与 vk_lib 数组；
+     hasVulkan12() 整个实现体替换为 return 0;；checkIfANGLESupported() 直接 return false;。
+     原实现会 dlopen("libvulkan.so") + vkCreateInstance() + 枚举物理设备，在麒麟
+     Maleoon 这类 Vulkan 能力不足的驱动上是纯粹的失败路径。
+  2. config/settings.cpp：删掉 hasVulkan12() 的调用与相关日志；读取用户配置之后
+     **无条件**覆盖 angleConfig = ForceDisable、angleDepthClearFixMode = Disabled。
+     也就是说即便把 config.json 写成 enableANGLE: 3 也回不去 ANGLE。
+
+为什么必须改源码：settings.cpp 在 ANGLE 判定之前就**无条件**调用 hasVulkan12()，
+只改配置文件并不足以避免创建 VkInstance。详见 BUILD.md「关于绝不调用 Vulkan」。
+
+--- a/MobileGlues-cpp/config/gpu_utils.cpp
++++ b/MobileGlues-cpp/config/gpu_utils.cpp
+@@ -8,7 +8,6 @@
+ #include "gpu_utils.h"
+ #include "../gles/loader.h"
+ #if !defined(__APPLE__)
+-#include "vulkan/vulkan.h"
+ #endif
+ 
+ #include <EGL/egl.h>
+@@ -20,7 +19,6 @@
+ // and hasVulkan12() returns 0 on every device.
+ static const cstr gles3_lib[] = {"libGLESv3_CM.so", "libGLESv3.so", nullptr};
+ static const cstr egl_libs[] = {"libEGL.so", nullptr};
+-static const cstr vk_lib[] = {"libvulkan.so", nullptr};
+ 
+ namespace egl_func {
+     PFNEGLGETDISPLAYPROC eglGetDisplay = nullptr;
+@@ -160,7 +158,8 @@
+ }
+ 
+ bool checkIfANGLESupported(const char* gpu) {
+-    return !isAdreno730(gpu) && !isAdreno740(gpu) && hasVulkan12();
++    (void) gpu;
++    return false;
+ }
+ 
+ int isAdreno830(const char* gpu) {
+@@ -169,92 +168,8 @@
+     return isAdreno(gpu) && (strstr(gpu, "830") != nullptr);
+ }
+ 
+-static std::optional<int> hasVk12;
++// PATCHED (mobileglues-no-vulkan): this build never probes Vulkan and never
++// dlopens libvulkan.so.  See patches/mobileglues-no-vulkan.patch
+ int hasVulkan12() {
+-    if (hasVk12.has_value()) return hasVk12.value();
+-    void* vulkan_lib = open_lib(vk_lib, nullptr);
+-    if (!vulkan_lib) return 0;
+-
+-#ifndef __APPLE__
+-
+-    typedef VkResult (*PFN_vkEnumerateInstanceExtensionProperties)(const char*, uint32_t*, VkExtensionProperties*);
+-    typedef VkResult (*PFN_vkCreateInstance)(const VkInstanceCreateInfo*, const VkAllocationCallbacks*, VkInstance*);
+-    typedef void (*PFN_vkDestroyInstance)(VkInstance, const VkAllocationCallbacks*);
+-    typedef VkResult (*PFN_vkEnumeratePhysicalDevices)(VkInstance, uint32_t*, VkPhysicalDevice*);
+-    typedef void (*PFN_vkGetPhysicalDeviceProperties)(VkPhysicalDevice, VkPhysicalDeviceProperties*);
+-
+-    auto vkEnumerateInstanceExtensionProperties =
+-        (PFN_vkEnumerateInstanceExtensionProperties)dlsym(vulkan_lib, "vkEnumerateInstanceExtensionProperties");
+-    auto vkCreateInstance = (PFN_vkCreateInstance)dlsym(vulkan_lib, "vkCreateInstance");
+-    auto vkDestroyInstance = (PFN_vkDestroyInstance)dlsym(vulkan_lib, "vkDestroyInstance");
+-    auto vkEnumeratePhysicalDevices = (PFN_vkEnumeratePhysicalDevices)dlsym(vulkan_lib, "vkEnumeratePhysicalDevices");
+-    auto vkGetPhysicalDeviceProperties =
+-        (PFN_vkGetPhysicalDeviceProperties)dlsym(vulkan_lib, "vkGetPhysicalDeviceProperties");
+-
+-    // Everything below runs to a single exit: the early returns this used to take left the library open and,
+-    // on the success path, leaked the physical-device array as well.
+-    int found = 0;
+-    bool instanceCreated = false;
+-    VkInstance instance = VK_NULL_HANDLE;
+-    VkPhysicalDevice* physicalDevices = nullptr;
+-    uint32_t instanceExtensionCount = 0;
+-    uint32_t gpuCount = 0;
+-
+-    bool haveEntryPoints = vkEnumerateInstanceExtensionProperties && vkCreateInstance && vkDestroyInstance &&
+-                           vkEnumeratePhysicalDevices && vkGetPhysicalDeviceProperties;
+-
+-    VkApplicationInfo appInfo = {};
+-    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+-    appInfo.pNext = nullptr;
+-    appInfo.pApplicationName = "Vulkan Check";
+-    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+-    appInfo.pEngineName = "MobileGlues";
+-    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+-    appInfo.apiVersion = VK_API_VERSION_1_3;
+-
+-    VkInstanceCreateInfo createInfo = {};
+-    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+-    createInfo.pNext = nullptr;
+-    createInfo.flags = 0;
+-    createInfo.pApplicationInfo = &appInfo;
+-    createInfo.enabledLayerCount = 0;
+-    createInfo.ppEnabledLayerNames = nullptr;
+-    createInfo.enabledExtensionCount = 0;
+-    createInfo.ppEnabledExtensionNames = nullptr;
+-
+-    if (haveEntryPoints &&
+-        vkEnumerateInstanceExtensionProperties(nullptr, &instanceExtensionCount, nullptr) == VK_SUCCESS &&
+-        vkCreateInstance(&createInfo, nullptr, &instance) == VK_SUCCESS) {
+-        instanceCreated = true;
+-        if (vkEnumeratePhysicalDevices(instance, &gpuCount, nullptr) == VK_SUCCESS && gpuCount > 0) {
+-            physicalDevices = (VkPhysicalDevice*)malloc(sizeof(VkPhysicalDevice) * gpuCount);
+-            // A null malloc used to be handed straight to the driver, which writes gpuCount handles through it.
+-            if (physicalDevices && vkEnumeratePhysicalDevices(instance, &gpuCount, physicalDevices) == VK_SUCCESS) {
+-                for (uint32_t i = 0; i < gpuCount; i++) {
+-                    VkPhysicalDeviceProperties deviceProperties;
+-                    vkGetPhysicalDeviceProperties(physicalDevices[i], &deviceProperties);
+-
+-                    if (deviceProperties.apiVersion >= VK_API_VERSION_1_2) {
+-                        found = 1;
+-                        break;
+-                    }
+-                }
+-            }
+-        }
+-    }
+-
+-    free(physicalDevices);
+-    if (instanceCreated) vkDestroyInstance(instance, nullptr);
+-    dlclose(vulkan_lib);
+-
+-    hasVk12 = found;
+-    return found;
+-
+-#else
+-
+-    dlclose(vulkan_lib);
+-    hasVk12 = 0;
+     return 0;
+-
+-#endif
+-}
+\ No newline at end of file
++}
+--- a/MobileGlues-cpp/config/settings.cpp
++++ b/MobileGlues-cpp/config/settings.cpp
+@@ -142,20 +142,28 @@
+     const char* gpu_cstr = gpuString.c_str();
+     LOG_D("GPU: %s", gpu_cstr ? gpu_cstr : "(unknown)")
+ 
+-    int hasVk12 = hasVulkan12();
++    // PATCHED (mobileglues-no-vulkan): this build never probes Vulkan -- see
++    // config/gpu_utils.cpp -- so there is nothing that could report ANGLE as
++    // supported, and ANGLE below is force-disabled regardless of config.json.
+     int isQcom = isAdreno(gpu_cstr);
+     int is730 = isAdreno730(gpu_cstr);
+     int is740 = isAdreno740(gpu_cstr);
+     int is830 = isAdreno830(gpu_cstr);
+     bool isANGLESupported = checkIfANGLESupported(gpu_cstr);
+ 
+-    LOG_D("Has Vulkan 1.2? = %s", hasVk12 ? "true" : "false")
+     LOG_D("Is Adreno? = %s", isQcom ? "true" : "false")
+     LOG_D("Is Adreno 730? = %s", is730 ? "true" : "false")
+     LOG_D("Is Adreno 740? = %s", is740 ? "true" : "false")
+     LOG_D("Is Adreno 830? = %s", is830 ? "true" : "false")
+     LOG_D("Is ANGLE supported? = %s", isANGLESupported ? "true" : "false")
+ 
++    // PATCHED (mobileglues-no-vulkan): ANGLE translates GLES to Vulkan and the
++    // depth-clear workaround is an ANGLE-only fix, so both are pinned here no
++    // matter what config.json asked for -- a stale or hand-edited
++    // "enableANGLE": 2/3 must not be able to bring either of them back.
++    angleConfig = AngleConfig::ForceDisable;
++    angleDepthClearFixMode = AngleDepthClearFixMode::Disabled;
++
+     switch (angleConfig) {
+     case AngleConfig::ForceDisable:
+         finalAngleMode = AngleMode::Disabled;

@@ -1,0 +1,735 @@
+让 FoldCraftLauncher 变成 HarmonyFCL 的全部源码与构建配置改动
+================================================================
+
+基线：FoldCraftLauncher 上游提交 72e156685d59ac3d338a7616f76f7094b57ac34e
+      （https://github.com/FCL-Team/FoldCraftLauncher）
+
+应用方式（在干净的上游检出里，仓库根目录执行）：
+
+    git apply -p1 patches/fcl-embed-mobileglues.patch
+
+本补丁覆盖范围 = **源码与构建配置**：FCL/ 模块下的 Java/Kotlin/资源/Gradle 配置，
+加上 gradle.properties、settings.gradle.kts、gradle/wrapper/gradle-wrapper.properties、
+.gitignore、.gitattributes。
+
+刻意**不含**以下内容（都在仓库里以别的方式提供）：
+
+  * third_party/MobileGlues/   —— vendored 的 MobileGlues 源码（体积原因，见该目录下 README）
+  * FCL/src/main/jniLibs/*/libmobileglues.so
+                               —— 由上面那份源码构建出的二进制（见 BUILD.md 的构建步骤）
+  * patches/mobileglues-no-vulkan.patch
+                               —— MobileGlues 侧的去 Vulkan 改动，单独一个补丁
+  * README.md / BUILD.md / NOTICE.md
+                               —— 本 fork 自己的文档，不属于源码改动
+
+diff --git a/.gitattributes b/.gitattributes
+index ac7dedf..84cd648 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -3,3 +3,6 @@
+ 
+ # 控件转换器金样测试资源按字节比较，禁止换行符转换（否则 Windows autocrlf 检出为 CRLF 导致字节级对拍失败）
+ FCL/src/test/resources/controlconverter/** -text
++
++# Windows 批处理显式写死 CRLF：`* text=auto` 在 core.autocrlf=false 的机器上会把 .bat 检出为 LF
++*.bat text eol=crlf
+diff --git a/.gitignore b/.gitignore
+index bc8ee8a..8d8541c 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -35,3 +35,15 @@ AGENTS.md
+ /.zcode/
+ .kotlin/
+ .zcodeignore
++
++# ---------------------------------------------------------------------------
++# 以下为本 fork 追加
++# ---------------------------------------------------------------------------
++
++# 自签名密钥绝不入库：拿到它就能伪造出「同包名 + 同签名」的包，让已安装的用户
++# 当成合法升级装上。生成与查找顺序见 BUILD.md「签名密钥」一节。
++harmony-fcl.jks
++
++# vendored MobileGlues 源码里的本地构建目录与产物（cmake -B build-<abi> 产生）
++/third_party/MobileGlues/MobileGlues-cpp/build-*/
++/third_party/MobileGlues/dist/
+diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
+index c5e2c09..f22e184 100644
+--- a/FCL/build.gradle.kts
++++ b/FCL/build.gradle.kts
+@@ -19,6 +19,31 @@ checkstyle {
+     configFile = rootProject.file("config/checkstyle/checkstyle.xml")
+ }
+ 
++/**
++ * `-Darch` 支持单个架构（arm/arm64/x86/x86_64）或逗号分隔的列表（如 `-Darch=arm64,arm`），
++ * `all` 表示不过滤。列表形式下 AGP 的 ABI splits 会为每个 ABI 各产出一个 APK。
++ */
++val archTokens: List<String> = System.getProperty("arch", "all")
++    .split(',')
++    .map { it.trim() }
++    .filter { it.isNotEmpty() }
++
++/** 是否按架构裁剪（arch=all 时不裁剪） */
++val filterByArch: Boolean = archTokens.isNotEmpty() && archTokens.none { it == "all" }
++
++/** arch token（arm/arm64/x86/x86_64）→ ABI 名（armeabi-v7a/arm64-v8a/…） */
++fun archTokenToAbi(token: String): String? = when (token) {
++    "arm" -> "armeabi-v7a"
++    "arm64" -> "arm64-v8a"
++    "x86" -> "x86"
++    "x86_64" -> "x86_64"
++    else -> null
++}
++
++/** 本次构建保留的 ABI 集合；`-Darch=all` 时为 null（不裁剪） */
++val targetAbis: Set<String>? =
++    if (!filterByArch) null else archTokens.mapNotNull { archTokenToAbi(it) }.toSet()
++
+ // AGP 不提供 Java 插件的 SourceSetContainer，checkstyle 插件不会自动创建任务，
+ // 因此手动注册 checkstyle 任务，检查范围为主源码目录的 Java 文件
+ tasks.register<Checkstyle>("checkstyle") {
+@@ -31,6 +56,35 @@ tasks.register<Checkstyle>("checkstyle") {
+     maxWarnings = 0
+ }
+ 
++/**
++ * 本 fork 自签名密钥（`harmony-fcl.jks`）的查找顺序，取第一个存在的：
++ *   1. Gradle 属性  `-PharmonyFclKeystore=<path>`
++ *   2. 环境变量     `HARMONYFCL_KEYSTORE`
++ *   3. 仓库根目录下的 `harmony-fcl.jks`
++ *   4. 仓库上一级目录下的 `harmony-fcl.jks`
++ *
++ * 密钥**不随仓库分发**（见 .gitignore）：换密钥等于换签名，拿到它的人可以伪造出
++ * 「同包名 + 同签名」的包让已安装的用户当成合法升级装上。要长期发布就自行生成一份并
++ * 妥善保存，生成命令见 BUILD.md。口令与别名同样可覆盖（`-PharmonyFclStorePassword` /
++ * `HARMONYFCL_STORE_PASSWORD`、`-PharmonyFclKeyAlias` / `HARMONYFCL_KEY_ALIAS`）。
++ *
++ * 一个都找不到时，构建不会失败：回落到仓库自带的 `debug-key.jks`（见下方 releaseSigning）。
++ */
++val harmonyKeystore: File? = listOfNotNull(
++    System.getProperty("harmonyFclKeystore"),
++    System.getenv("HARMONYFCL_KEYSTORE"),
++    rootProject.file("harmony-fcl.jks").absolutePath,
++    rootProject.file("../harmony-fcl.jks").absolutePath,
++).map { File(it) }.firstOrNull { it.isFile }
++
++val harmonyStorePassword: String = System.getProperty("harmonyFclStorePassword")
++    ?: System.getenv("HARMONYFCL_STORE_PASSWORD")
++    ?: "HarmonyFCL"
++
++val harmonyKeyAlias: String = System.getProperty("harmonyFclKeyAlias")
++    ?: System.getenv("HARMONYFCL_KEY_ALIAS")
++    ?: "harmonyfcl"
++
+ android {
+     namespace = "com.tungsten.fcl"
+     compileSdk = libs.versions.compileSdk.get().toInt()
+@@ -64,13 +118,25 @@ android {
+             keyAlias = "FCL-Debug"
+             keyPassword = "FCL-Debug"
+         }
++        // 本 fork 的自签名密钥（有效期 10000 天 → 2054），路径按上面 harmonyKeystore 的顺序解析。
++        // 生成命令见 BUILD.md「签名密钥」一节。
++        create("HarmonyFCLSelfSigned") {
++            harmonyKeystore?.let {
++                storeFile = it
++                storePassword = harmonyStorePassword
++                keyAlias = harmonyKeyAlias
++                keyPassword = harmonyStorePassword
++            }
++        }
+     }
+ 
+     defaultConfig {
+-        applicationId = "com.tungsten.fcl"
++        applicationId = "com.harmony.fcl"
+         minSdk = libs.versions.minSdk.get().toInt()
+         targetSdk = libs.versions.targetSdk.get().toInt()
+-        versionCode = 1335
++        // 内置 MobileGlues 的 fork 版本：versionCode 与上游 1.3.3.5(1335) 区分开，
++        // versionName 保持不动（FCL 自身有基于 versionName 的解析）
++        versionCode = 1336
+         versionName = "1.3.3.5"
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+         externalNativeBuild {
+@@ -80,23 +146,34 @@ android {
+         }
+     }
+ 
+-    testBuildType = "fordebug"
++    testBuildType = "debug"
++
++    // 本 fork 只出一个包（包名 com.harmony.fcl，桌面名 Harmony FCL）。包名与官方版不同，
++    // 可以与官方版 FCL 共存安装。
++    //
++    // 找不到自签名密钥时回落到仓库自带的 debug-key.jks —— 这样任何人 clone 下来都能直接构建，
++    // 不必先有密钥。代价是产物带的是上游的调试签名（CN=FCL-Debug），与正式发布包签名不同，
++    // 不能覆盖安装正式包。要发布就自己生成一份 harmony-fcl.jks（见 BUILD.md）。
++    val releaseSigning = if (harmonyKeystore != null) {
++        signingConfigs.getByName("HarmonyFCLSelfSigned")
++    } else {
++        logger.warn(
++            "==> 未找到 harmony-fcl.jks（已查找：-PharmonyFclKeystore 属性、" +
++                "HARMONYFCL_KEYSTORE 环境变量、仓库根目录、仓库上一级目录）。" +
++                "本次构建回落到仓库自带的 debug-key.jks，产物是调试签名，" +
++                "不能覆盖安装正式发布包。"
++        )
++        signingConfigs.getByName("FCLDebugKey")
++    }
+ 
+     buildTypes {
+         getByName("release") {
+             isMinifyEnabled = false
+-            signingConfig = signingConfigs.getByName("FCLKey")
++            signingConfig = releaseSigning
+         }
+         getByName("debug") {
+             isMinifyEnabled = false
+-            signingConfig = signingConfigs.getByName("FCLKey")
+-        }
+-        create("fordebug") {
+-            initWith(getByName("debug"))
+-            applicationIdSuffix = ".debug"
+-            signingConfig = signingConfigs.getByName("FCLDebugKey")
+-            // 与 FileProvider authority（${applicationId}.provider）保持一致（原 FCLLibrary 模块的 resValue）
+-            resValue("string", "file_browser_provider", "com.tungsten.fcl.debug.provider")
++            signingConfig = releaseSigning
+         }
+         configureEach {
+             resValue("string", "app_version", defaultConfig.versionName.toString())
+@@ -134,20 +211,15 @@ android {
+         }
+     }
+ 
+-    ndkVersion = "27.0.12077973"
++    // 上游声明 27.0.12077973；本地只有 27.3.13750724（同一大版本），复用已装的这一个
++    ndkVersion = "27.3.13750724"
+ 
+     splits {
+-        val arch = System.getProperty("arch", "all")
+-        if (arch != "all") {
++        if (targetAbis != null) {
+             abi {
+                 isEnable = true
+                 reset()
+-                when (arch) {
+-                    "arm" -> include("armeabi-v7a")
+-                    "arm64" -> include("arm64-v8a")
+-                    "x86" -> include("x86")
+-                    "x86_64" -> include("x86_64")
+-                }
++                targetAbis.forEach { include(it) }
+             }
+         }
+     }
+@@ -164,13 +236,14 @@ abstract class FilterJreAssets : Sync() {
+ 
+ val filterJreAssets = tasks.register<FilterJreAssets>("filterJreAssets") {
+     val arch = System.getProperty("arch", "all")
++    val keepJre = archTokens.map { "bin-$it.tar.xz" }.toSet()
+     // Copy/Sync 的 up-to-date 检查不包含 copy spec 的过滤规则，必须显式声明 arch 输入，
+     // 否则切换架构时任务不会重跑，产物会残留上一架构的 JRE 包
+     inputs.property("arch", arch)
+     from(layout.projectDirectory.dir("src/main/jreAssets"))
+     into(outputDir)
+-    if (arch != "all") {
+-        exclude { it.name.startsWith("bin-") && it.name != "bin-$arch.tar.xz" }
++    if (filterByArch) {
++        exclude { it.name.startsWith("bin-") && !keepJre.contains(it.name) }
+     }
+ }
+ 
+@@ -180,7 +253,7 @@ androidComponents {
+             if (output is com.android.build.api.variant.impl.VariantOutputImpl) {
+                 (output.getFilter(ABI)?.identifier ?: "all").let { abi ->
+                     output.outputFileName =
+-                        "FCL-${variant.buildType}-${project.android.defaultConfig.versionName}-${abi}.apk"
++                        "HarmonyFCL-${project.android.defaultConfig.versionName}-${abi}.apk"
+                 }
+             }
+         }
+@@ -205,14 +278,8 @@ androidComponents {
+             mergeAssets.configure { inputs.property("lwjglArch", arch) }
+             mergeAssets.configure {
+                 doLast {
+-                    if (arch == "all") return@doLast
+-                    val abi = when (arch) {
+-                        "arm" -> "armeabi-v7a"
+-                        "arm64" -> "arm64-v8a"
+-                        "x86" -> "x86"
+-                        "x86_64" -> "x86_64"
+-                        else -> return@doLast
+-                    }
++                    val keepAbis = targetAbis ?: return@doLast
++                    if (keepAbis.isEmpty()) return@doLast
+                     val assetsDir = outputDir.get().asFile
+                     // 版本列表从 libs 下的 lwjgl-*-natives-release.aar 文件名推导，避免新增版本时忘记同步
+                     val lwjglVersions = project.file("libs").listFiles { f ->
+@@ -224,7 +291,7 @@ androidComponents {
+                         val nativesDir = File(assetsDir, "app_runtime/lwjgl/$version/natives")
+                         if (nativesDir.isDirectory) {
+                             nativesDir.listFiles()?.forEach { dir ->
+-                                if (dir.isDirectory && dir.name != abi) {
++                                if (dir.isDirectory && !keepAbis.contains(dir.name)) {
+                                     logger.lifecycle("删除非目标架构 natives: $dir")
+                                     dir.deleteRecursively()
+                                 }
+@@ -236,7 +303,7 @@ androidComponents {
+                         val nativesDir = File(versionDir, "natives")
+                         if (nativesDir.isDirectory) {
+                             nativesDir.listFiles()?.forEach { dir ->
+-                                if (dir.isDirectory && dir.name != abi) {
++                                if (dir.isDirectory && !keepAbis.contains(dir.name)) {
+                                     logger.lifecycle("删除非目标架构 natives: $dir")
+                                     dir.deleteRecursively()
+                                 }
+diff --git a/FCL/src/main/java/com/mio/data/Renderer.kt b/FCL/src/main/java/com/mio/data/Renderer.kt
+index 3663599..77eb991 100644
+--- a/FCL/src/main/java/com/mio/data/Renderer.kt
++++ b/FCL/src/main/java/com/mio/data/Renderer.kt
+@@ -25,6 +25,9 @@ data class Renderer(
+         const val ID_ZINK = "18d93f17-ff53-a319-fa61-58709a77bf87"
+         const val ID_FREEDRENO = "8d427e6c-9d22-2d19-db0c-3b9ac2c1543f"
+         const val ID_NGGL4ES = "e7b90ed6-e518-4d4e-93dc-5c7133cd5b31"
++
++        /** 内置 MobileGlues（libmobileglues.so），ID 一旦发布不可更改 */
++        const val ID_MOBILEGLUES = "3c9b1d47-2a86-4e51-9f0c-6d1e8b7a4c25"
+     }
+ 
+     fun getGLPath(): String {
+diff --git a/FCL/src/main/java/com/mio/manager/RendererManager.kt b/FCL/src/main/java/com/mio/manager/RendererManager.kt
+index c300273..0b27c3c 100644
+--- a/FCL/src/main/java/com/mio/manager/RendererManager.kt
++++ b/FCL/src/main/java/com/mio/manager/RendererManager.kt
+@@ -14,6 +14,7 @@ object RendererManager {
+     lateinit var RENDERER_ZINK: Renderer
+     lateinit var RENDERER_FREEDRENO: Renderer
+     lateinit var RENDERER_NGGL4ES: Renderer
++    lateinit var RENDERER_MOBILEGLUES: Renderer
+     private var isInit = false
+ 
+     @JvmStatic
+@@ -111,12 +112,26 @@ object RendererManager {
+             displayMaxMCver = "26.2"
+         )
+ 
++        RENDERER_MOBILEGLUES = Renderer(
++            "MobileGlues",
++            context.getString(R.string.settings_fcl_renderer_mobileglues),
++            "libmobileglues.so",
++            "libmobileglues.so",
++            "",
++            null,
++            null,
++            Renderer.ID_MOBILEGLUES,
++            "1.17",
++            ""
++        )
++
+         RendererPlugin.init(context)
+         addRenderer()
+         DriverPlugin.init(context)
+     }
+ 
+     private fun addRenderer() {
++        rendererList.add(RENDERER_MOBILEGLUES)
+         rendererList.add(RENDERER_NGGL4ES)
+         rendererList.add(RENDERER_GL4ES)
+         rendererList.add(RENDERER_VIRGL)
+diff --git a/FCL/src/main/java/com/tungsten/fcl/setting/Controllers.java b/FCL/src/main/java/com/tungsten/fcl/setting/Controllers.java
+index d53a931..3aeaea6 100644
+--- a/FCL/src/main/java/com/tungsten/fcl/setting/Controllers.java
++++ b/FCL/src/main/java/com/tungsten/fcl/setting/Controllers.java
+@@ -18,6 +18,7 @@ import com.tungsten.fclcore.util.io.IOUtils;
+ 
+ import java.io.File;
+ import java.io.IOException;
++import java.io.InputStream;
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.concurrent.CopyOnWriteArrayList;
+@@ -41,6 +42,9 @@ public class Controllers {
+ 
+     private static final List<Runnable> CALLBACKS = new CopyOnWriteArrayList<>();
+ 
++    /** 内置默认键位布局在 assets 中的路径：文件名即布局 id，与 VersionSetting 的默认值一致。 */
++    private static final String DEFAULT_CONTROLLER_ASSET = "/assets/controllers/00000000.json";
++
+     public static void checkControllers() {
+         synchronized (LOCK) {
+             if (controllers.contains(null)) {
+@@ -48,13 +52,18 @@ public class Controllers {
+             }
+             if (controllers.isEmpty()) {
+                 try {
++                    // 一律把 assets 里的原始文件字节落盘，再用轻量解析读出内存对象：既不把全部
++                    // 按键对象常驻内存，也绝不会因为"轻量对象只带元数据"而把按键写空。内置布局
++                    // 完全可以换成一两千个按键的成品（见 BUILD.md「自定义默认键位」），这条路径
++                    // 必须与布局体积无关。
++                    File dest = new File(FCLPath.CONTROLLER_DIR, "00000000.json");
++                    try (InputStream in = Controllers.class.getResourceAsStream(DEFAULT_CONTROLLER_ASSET)) {
++                        FileUtils.writeBytes(dest, IOUtils.readFully(in));
++                    }
+                     if (DEFAULT_CONTROLLER == null) {
+-                        String str = IOUtils.readFullyAsString(Controllers.class.getResourceAsStream("/assets/controllers/00000000.json"));
+-                        // assets 默认控制器保持完整解析（列表为空场景罕见，一次可接受）
+-                        DEFAULT_CONTROLLER = Controller.GSON.fromJson(str, Controller.class);
++                        DEFAULT_CONTROLLER = Controller.parseLightweight(dest);
+                     }
+-                    DEFAULT_CONTROLLER.saveToDisk();
+-                } catch (IOException e) {
++                } catch (IOException | JsonParseException e) {
+                     Logging.LOG.log(Level.SEVERE, "Failed to generate default controller!", e.getMessage());
+                 }
+                 controllers.addAll(getControllersFromDisk());
+diff --git a/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt b/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt
+index f6813ee..e56da91 100644
+--- a/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt
++++ b/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt
+@@ -43,6 +43,18 @@ import java.lang.reflect.Type
+ @JsonAdapter(VersionSetting.Serializer::class)
+ class VersionSetting : Cloneable {
+ 
++    companion object {
++        /**
++         * 新版本/新安装的默认 JVM 参数。
++         *
++         * `-XX:+UnlockExperimentalVMOptions` 任何 JVM 上都接受；`-XX:UseSVE=0` 关掉
++         * aarch64 上的 SVE 向量化——卓易通（鸿蒙容器）里麒麟 SoC 的 SVE 会让默认下载的
++         * Java 启动异常，所以无条件带上，不做 Java 版本 / CPU 架构判断。
++         * 字段本身完全可编辑：用户遇到不认识的参数直接删掉即可，删了不会被加回。
++         */
++        const val DEFAULT_JAVA_ARGS = "-XX:+UnlockExperimentalVMOptions -XX:UseSVE=0"
++    }
++
+     /**
+      * FCL Version Settings have been divided into 2 parts.
+      * 1. Global settings.
+@@ -94,8 +106,11 @@ class VersionSetting : Cloneable {
+     // options
+     /**
+      * The user customized arguments passed to JVM.
++     *
++     * 默认值不再是空白：卓易通（鸿蒙容器）里 FCL 默认下载的 Java 需要关闭 SVE 才能稳定启动。
++     * 这两个参数原样传给 JVM（不按架构 / Java 版本做任何过滤），用户随时可以改回空白。
+      */
+-    var javaArgs: String = ""
++    var javaArgs: String = DEFAULT_JAVA_ARGS
+         set(value) {
+             if (field == value) return
+             field = value
+@@ -177,7 +192,7 @@ class VersionSetting : Cloneable {
+             changed()
+         }
+ 
+-    var renderer: String = Renderer.ID_NGGL4ES
++    var renderer: String = Renderer.ID_MOBILEGLUES
+         set(value) {
+             if (field == value) return
+             field = value
+@@ -311,7 +326,7 @@ class VersionSetting : Cloneable {
+             if (maxMemoryN <= 0) maxMemoryN = MemoryUtils.findBestRAMAllocation(FCLApp.getAppContext())
+             return VersionSetting().also { vs ->
+                 vs.isUsesGlobal = json["usesGlobal"]?.asBoolean ?: true
+-                vs.javaArgs = json["javaArgs"]?.asString ?: ""
++                vs.javaArgs = json["javaArgs"]?.asString ?: DEFAULT_JAVA_ARGS
+                 vs.minecraftArgs = json["minecraftArgs"]?.asString ?: ""
+                 vs.maxMemory = maxMemoryN
+                 vs.minMemory = json["minMemory"]?.asInt
+@@ -326,7 +341,7 @@ class VersionSetting : Cloneable {
+                 vs.isVKDriverSystem = json["vulkanDriverSystem"]?.asBoolean ?: false
+                 vs.controller = json["controller"]?.asString ?: ("00000000")
+                 vs.renderer =
+-                    json["renderer"]?.asString ?: Renderer.ID_NGGL4ES
++                    json["renderer"]?.asString ?: Renderer.ID_MOBILEGLUES
+                 vs.driver = json["driver"]?.asString ?: "Turnip"
+                 vs.isIsolateGameDir = json["isolateGameDir"]?.asBoolean ?: false
+                 vs.isNotCheckMod = json["notCheckMod"]?.asBoolean ?: false
+diff --git a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
+index eab67d1..dbcc1f1 100644
+--- a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
++++ b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
+@@ -21,6 +21,7 @@ import com.oracle.dalvik.VMLauncher;
+ import com.tungsten.fclauncher.bridge.FCLBridge;
+ import com.tungsten.fclauncher.utils.Architecture;
+ import com.tungsten.fclauncher.utils.FCLPath;
++import com.tungsten.fclauncher.utils.MobileGluesConfig;
+ import com.tungsten.fclcore.util.Logging;
+ 
+ import java.io.BufferedReader;
+@@ -359,6 +360,19 @@ public class FCLauncher {
+             // TODO: set NGG_DIR_PATH to custom path
+             envMap.put("POJAV_RENDERER", "opengles3");
+             envMap.put("POJAVEXEC_EGL", "libEGL.so");
++        } else if (renderer.isEqual(Renderer.ID_MOBILEGLUES)) {
++            // 内置 MobileGlues：libmobileglues.so 同时导出 GL 与 EGL 入口（glName == eglName）。
++            // POJAV_RENDERER=opengles3 命中 egl_bridge.c 的 "opengles" 前缀分支，走 GL4ES 桥接表，
++            // 不会加载 Vulkan；POJAVEXEC_EGL=libmobileglues.so 是 native sdl_hook 已特判的名字。
++            // 环境变量与独立插件 APK 的 v1 元数据保持一致，只是不再需要那个 APK。
++            envMap.put("LIBGL_ES", "3");
++            envMap.put("LIBGL_EGL", "libmobileglues.so");
++            envMap.put("POJAV_RENDERER", "opengles3");
++            envMap.put("POJAVEXEC_EGL", "libmobileglues.so");
++            envMap.put("MG_COUNT_LAUNCH", "1");
++            // MobileGlues 的 config.json / latest.log / glsl_cache.tmp 都放在这个目录里，
++            // 指向 FCL 自己的应用目录后不再需要额外的存储权限
++            envMap.put("MG_DIR_PATH", MobileGluesConfig.ensureDir(config.getContext()));
+         } else {
+             envMap.put("MESA_GLSL_CACHE_DIR", config.getContext().getCacheDir().getAbsolutePath());
+             envMap.put("MESA_GL_VERSION_OVERRIDE", renderer.isEqual(Renderer.ID_VIRGL) ? "4.3" : "4.6");
+diff --git a/FCL/src/main/java/com/tungsten/fclauncher/utils/MobileGluesConfig.java b/FCL/src/main/java/com/tungsten/fclauncher/utils/MobileGluesConfig.java
+new file mode 100644
+index 0000000..9f59ba5
+--- /dev/null
++++ b/FCL/src/main/java/com/tungsten/fclauncher/utils/MobileGluesConfig.java
+@@ -0,0 +1,81 @@
++package com.tungsten.fclauncher.utils;
++
++import android.content.Context;
++
++import java.io.File;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.io.OutputStreamWriter;
++import java.nio.charset.StandardCharsets;
++
++/**
++ * 内置 MobileGlues 渲染器的配置目录。
++ *
++ * <p>MobileGlues 把 {@code config.json}、{@code latest.log}、{@code glsl_cache.tmp}、
++ * {@code stats.json} 全都放在 {@code MG_DIR_PATH} 指向的目录里（默认是 {@code /sdcard/MG}，
++ * 那是独立插件 APK 的路径，需要「所有文件访问」权限才能写）。内置之后把它指到 FCL 自己的
++ * 应用外部目录：游戏进程与启动器同属一个 uid，无需任何额外权限即可读写，
++ * 因此内嵌后只需要给 FCL 授权一次。
++ *
++ * <p>种子文件只在缺失时写入，绝不覆盖——这是内嵌后用户调整 MobileGlues 参数的唯一入口。
++ * 其中 {@code enableANGLE=2}（ForceDisable）与 {@code angleDepthClearFixMode=0}（Disabled）
++ * 是刻意的：ANGLE 走 GLES→Vulkan，麒麟 Maleoon 驱动的 Vulkan 能力不足。这两个键在
++ * MobileGlues 源码里也被再次硬置（见仓库内 patches/mobileglues-no-vulkan.patch），
++ * 所以即使有人手改这里，也回不去 ANGLE，更不会出现任何 Vulkan 调用。
++ */
++public final class MobileGluesConfig {
++
++    public static final String DIR_NAME = "mobileglues";
++    public static final String CONFIG_FILE = "config.json";
++
++    /**
++     * 键名与取值都对齐 MobileGlues 自己的磁盘格式（插件端 MGConfigCodec.kt / native 端 config_get_int），
++     * 其余未列出的键由 MobileGlues 使用它自己的默认值。
++     */
++    private static final String DEFAULT_CONFIG = "{\n"
++            + "  \"enableANGLE\": 2,\n"
++            + "  \"angleDepthClearFixMode\": 0,\n"
++            + "  \"enableNoError\": 0,\n"
++            + "  \"enableExtTimerQuery\": 1,\n"
++            + "  \"enableExtComputeShader\": 0,\n"
++            + "  \"enableExtDirectStateAccess\": 0,\n"
++            + "  \"maxGlslCacheSize\": 32,\n"
++            + "  \"customGLVersion\": 0,\n"
++            + "  \"fsr1Setting\": 0\n"
++            + "}\n";
++
++    private MobileGluesConfig() {
++    }
++
++    /**
++     * MobileGlues 的工作目录：应用外部目录（{@code Android/data/<包名>/files/mobileglues}），
++     * 拿不到外部目录（极少见）时退回应用内部目录。
++     */
++    public static File getDir(Context context) {
++        File external = context.getExternalFilesDir(null);
++        File base = external != null ? external : context.getFilesDir();
++        return new File(base, DIR_NAME);
++    }
++
++    /**
++     * 确保目录与 {@code config.json} 存在，返回目录绝对路径（用作 {@code MG_DIR_PATH}）。
++     * 已有 config.json 时不改动其内容。
++     */
++    public static String ensureDir(Context context) {
++        File dir = getDir(context);
++        if (!dir.isDirectory() && !dir.mkdirs()) {
++            // 建不出来就让 MobileGlues 用它自己的默认路径；ANGLE 仍被源码强制关闭
++            return dir.getAbsolutePath();
++        }
++        File config = new File(dir, CONFIG_FILE);
++        if (!config.exists()) {
++            try (OutputStreamWriter writer = new OutputStreamWriter(
++                    new FileOutputStream(config), StandardCharsets.UTF_8)) {
++                writer.write(DEFAULT_CONFIG);
++            } catch (IOException e) {
++                e.printStackTrace();
++            }
++        }
++        return dir.getAbsolutePath();
++    }
++}
+diff --git a/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java b/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java
+index dce11e9..81ae15b 100644
+--- a/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java
++++ b/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java
+@@ -100,7 +100,9 @@ public class DefaultLauncher {
+ 
+         getCacioJavaArgs(res, version, options);
+ 
+-        res.addAllWithoutParsing(options.getJavaArguments().stream().filter(arg -> !arg.equals("noXmx")).collect(Collectors.toList()));
++        res.addAllWithoutParsing(options.getJavaArguments().stream()
++                .filter(arg -> !arg.equals("noXmx"))
++                .collect(Collectors.toList()));
+ 
+         if (options.getMaxMemory() != null && options.getMaxMemory() > 0)
+             res.addDefault("-Xmx", options.getMaxMemory() + "m");
+diff --git a/FCL/src/main/res/values-vi/strings.xml b/FCL/src/main/res/values-vi/strings.xml
+index 93a9cfa..a0b8d30 100644
+--- a/FCL/src/main/res/values-vi/strings.xml
++++ b/FCL/src/main/res/values-vi/strings.xml
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <string name="app_name" translatable="false">Fold Craft Launcher</string>
++    <string name="app_name" translatable="false">Harmony FCL</string>
+     <string name="app_name_import">Cài đặt Modpack</string>
+     <string name="splash_agreement">FCL yêu cầu quyền lưu trữ để quản lý và đọc các tệp trò chơi. FCL hoàn toàn mã nguồn mở trên GitHub, vì vậy bạn hãy yên tâm về an toàn dữ liệu của mình. Quyền này chỉ nhằm mục đích để trò chơi hoạt động bình thường và không gây ra rủi ro về bảo mật.</string>
+     <string name="splash_permission_msg">Không có quyền lưu trữ, vui lòng cấp quyền cho Fold Craft Launcher.</string>
+diff --git a/FCL/src/main/res/values-zh/strings.xml b/FCL/src/main/res/values-zh/strings.xml
+index ee3ced0..8b2eb62 100644
+--- a/FCL/src/main/res/values-zh/strings.xml
++++ b/FCL/src/main/res/values-zh/strings.xml
+@@ -2,14 +2,14 @@
+ <resources>
+     <string name="app_name_import">安装整合包</string>
+     <string name="splash_agreement">FCL需要储存权限以管理/读取游戏文件，FCL在GitHub上完全开源，请不用担心您的数据安全。权限仅用于正常运行游戏，无任何安全问题。</string>
+-    <string name="splash_permission_msg">没有存储权限，请授予 Fold Craft Launcher 权限。</string>
++    <string name="splash_permission_msg">没有存储权限，请授予 Harmony FCL 权限。</string>
+     <string name="splash_permission_grant">授予</string>
+     <string name="splash_permission_title">需要存储权限</string>
+     <string name="splash_permission_close">关闭应用</string>
+     <string name="splash_permission_settings">去设置</string>
+     <string name="splash_permission_settings_msg">您已选择永不授权，请在设置中手动授予存储权限。</string>
+     <string name="notification_permission">FCL需要发布通知的权限，防止无法正常安装/启动游戏 。</string>
+-    <string name="splash_title">欢迎使用 Fold Craft Launcher</string>
++    <string name="splash_title">欢迎使用 Harmony FCL</string>
+     <string name="splash_eula_error">无法获取用户协议，请检查网络。</string>
+     <string name="splash_eula_next">同意并继续</string>
+     <string name="splash_runtime_title">安装或更新运行环境</string>
+@@ -1337,7 +1337,7 @@
+     <string name="file_browser_share_title">分享文件</string>
+     <string name="file_browser_share_message">你确定要分享此文件吗？</string>
+     <string name="crash_reporter_title">崩溃报告</string>
+-    <string name="crash_reporter_hint">Fold Craft Launcher 遇到了无法解决的错误，请向开发者或他人求助。</string>
++    <string name="crash_reporter_hint">Harmony FCL 遇到了无法解决的错误，请向开发者或他人求助。</string>
+     <string name="crash_reporter_restart">重启软件</string>
+     <string name="crash_reporter_close">退出软件</string>
+     <string name="crash_reporter_copy">复制日志</string>
+diff --git a/FCL/src/main/res/values/strings.xml b/FCL/src/main/res/values/strings.xml
+index a4a522b..9996465 100644
+--- a/FCL/src/main/res/values/strings.xml
++++ b/FCL/src/main/res/values/strings.xml
+@@ -1,9 +1,9 @@
+ <resources>
+-    <string name="app_name" translatable="false">Fold Craft Launcher</string>
++    <string name="app_name" translatable="false">Harmony FCL</string>
+     <string name="app_name_import">Install Modpack</string>
+ 
+     <string name="splash_agreement">FCL requires storage permission to manage and read game files. FCL is fully open-source on GitHub, so please rest assured about your data security. The permission is solely for the game to operate properly and poses no security risks.</string>
+-    <string name="splash_permission_msg">No storage permission, please grant Fold Craft Launcher the permission.</string>
++    <string name="splash_permission_msg">No storage permission, please grant Harmony FCL the permission.</string>
+     <string name="splash_permission_grant">Grant</string>
+     <string name="splash_permission_title">Permission to store needed</string>
+     <string name="splash_permission_close">Close the app</string>
+@@ -11,7 +11,7 @@
+     <string name="splash_permission_settings_msg">You have chosen "Never Allow" Please manually grant storage permissions in settings.</string>
+     <string name="notification_permission">FCL requires permission to post notifications to prevent issues with normal game installation or startup.</string>
+ 
+-    <string name="splash_title">Welcome to Fold Craft Launcher</string>
++    <string name="splash_title">Welcome to Harmony FCL</string>
+     <string name="splash_eula_error">Cannot get EULA, please check the network.</string>
+     <string name="splash_eula_next">Agree and Continue</string>
+     <string name="splash_runtime_title">Install or update app runtime</string>
+@@ -1032,6 +1032,8 @@
+     <string name="settings_fcl_renderer_zink" translatable="false">Kopper Zink (OpenGL 4.6)</string>
+     <string name="settings_fcl_renderer_freedreno">Freedreno (OpenGL 4.6, only support adreno616-a660)</string>
+     <string name="settings_fcl_renderer_nggl4es">Krypton Wrapper (OpenGL 3.1+)</string>
++    <!-- 内置 MobileGlues：随 APK 分发，不需要单独的插件 APK -->
++    <string name="settings_fcl_renderer_mobileglues" translatable="false">MobileGlues (OpenGL 4.0, 1.17+)</string>
+ 
+     <string name="settings_fcl_driver">Vulkan Driver</string>
+     <string name="settings_fcl_driver_desc">Choose the Vulkan driver implementation.</string>
+@@ -1458,7 +1460,7 @@
+     <string name="jar_executor_warn">Note! This feature is not for installing mods. If you are installing mods, please use the launcher\'s download function or add them in "Manage Mods".</string>
+ 
+     <!-- 原 FCLLibrary 模块字符串（模块已并入 FCL） -->
+-    <string name="file_browser_provider" translatable="false">com.tungsten.fcl.provider</string>
++    <string name="file_browser_provider" translatable="false">com.harmony.fcl.provider</string>
+     <string name="file_browser_title">File Browser</string>
+     <string name="file_browser_back">Back</string>
+     <string name="file_browser_close">Exit</string>
+@@ -1479,7 +1481,7 @@
+     <string name="file_browser_share_title">Share the file</string>
+     <string name="file_browser_share_message">Are you sure to share this file?</string>
+     <string name="crash_reporter_title">Crash Report</string>
+-    <string name="crash_reporter_hint">Fold Craft Launcher has encountered an unresolvable error, please seek help from the developer or others.</string>
++    <string name="crash_reporter_hint">Harmony FCL has encountered an unresolvable error, please seek help from the developer or others.</string>
+     <string name="crash_reporter_restart">Restart</string>
+     <string name="crash_reporter_close">Exit</string>
+     <string name="crash_reporter_copy">Copy</string>
+diff --git a/gradle.properties b/gradle.properties
+index ac74161..5941ea8 100644
+--- a/gradle.properties
++++ b/gradle.properties
+@@ -6,7 +6,10 @@
+ # http://www.gradle.org/docs/current/userguide/build_environment.html
+ # Specifies the JVM arguments used for the daemon process.
+ # The setting is particularly useful for tweaking memory settings.
+-org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
++# 守护进程内存上限抬到 3G、Kotlin 守护进程另给 1.5G：FCL 全量构建（KSP + CMake + LWJGL 资产裁剪）
++# 在默认的 2G 下容易 OOM。内存充裕的机器可以保持不动，内存紧张的机器按需调小。
++org.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8
++kotlin.daemon.jvmargs=-Xmx1536m
+ # When configured, Gradle will run in incubating parallel mode.
+ # This option should only be used with decoupled projects. More details, visit
+ # http://www.gradle.org/docs/current/userguide/multi_project_builds.html#sec:decoupled_projects
+diff --git a/gradle/wrapper/gradle-wrapper.properties b/gradle/wrapper/gradle-wrapper.properties
+index 1abd527..c71598d 100644
+--- a/gradle/wrapper/gradle-wrapper.properties
++++ b/gradle/wrapper/gradle-wrapper.properties
+@@ -1,7 +1,10 @@
+ #Sat Jun 06 11:36:59 CST 2026
+ distributionBase=GRADLE_USER_HOME
+ distributionPath=wrapper/dists
+-distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.4-bin.zip
++# 用腾讯云镜像分发 Gradle 发行包（与官方是同一份文件）。部分网络环境下 JDK 访问
++# services.gradle.org 会因证书链不被信任而 PKIX 失败；要换回官方地址，把下面这行改成
++# https\://services.gradle.org/distributions/gradle-8.14.4-bin.zip 即可。
++distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.14.4-bin.zip
+ networkTimeout=10000
+ validateDistributionUrl=true
+ zipStoreBase=GRADLE_USER_HOME
+diff --git a/settings.gradle.kts b/settings.gradle.kts
+index 7d24f0c..b2c38be 100644
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -1,5 +1,8 @@
+ pluginManagement {
+     repositories {
++        // 国内镜像放最前，见下方 dependencyResolutionManagement 的注释
++        maven("https://maven.aliyun.com/repository/public")
++        maven("https://maven.aliyun.com/repository/google")
+         gradlePluginPortal()
+         google()
+         mavenCentral()
+@@ -11,6 +14,13 @@ plugins {
+ dependencyResolutionManagement {
+     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+     repositories {
++        // 国内镜像放在最前：Maven Central 上有一部分构件（如
++        // org.jetbrains.kotlin:kotlin-compiler-embeddable）会 301 跳到 github.com 的
++        // release 资源，国内网络常常取不到（部分网络下还会因证书链不被信任而 PKIX 失败）。
++        // 镜像里没有的构件返回 404，Gradle 会自动回落到下面的 google()/mavenCentral()。
++        maven("https://maven.aliyun.com/repository/public")
++        maven("https://maven.aliyun.com/repository/google")
++        maven("https://maven.aliyun.com/repository/gradle-plugin")
+         google()
+         mavenCentral()
+         maven("https://jitpack.io")

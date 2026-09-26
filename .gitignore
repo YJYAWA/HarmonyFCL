@@ -1,0 +1,49 @@
+# Gradle files
+.gradle/
+build/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Log/OS Files
+*.log
+
+# Android Studio generated files and folders
+captures/
+.externalNativeBuild/
+.cxx/
+release
+*.apk
+output.json
+android-ndk-r26d/
+
+# IntelliJ
+*.iml
+.idea/
+.trae/
+
+# Google Services (e.g. APIs or Firebase)
+google-services.json
+
+# Android Profiling
+*.hprof
+FCL/src/main/java/com/mio/Main.kt
+.DS_Store
+AGENTS.md
+
+# ZCode 会话文件
+/.zcode/
+.kotlin/
+.zcodeignore
+
+# ---------------------------------------------------------------------------
+# 以下为本 fork 追加
+# ---------------------------------------------------------------------------
+
+# 自签名密钥绝不入库：拿到它就能伪造出「同包名 + 同签名」的包，让已安装的用户
+# 当成合法升级装上。生成与查找顺序见 BUILD.md「签名密钥」一节。
+harmony-fcl.jks
+
+# vendored MobileGlues 源码里的本地构建目录与产物（cmake -B build-<abi> 产生）
+/third_party/MobileGlues/MobileGlues-cpp/build-*/
+/third_party/MobileGlues/dist/
