@@ -92,7 +92,7 @@
 - **不覆盖 FCL 自带的其它渲染器。** Nggl4es / GL4ES / VirGL / VGPU / Zink / Freedreno 都还在，
   可以手动选。
 
-  > ⚠️ 但**手选 Zink / Freedreno 会加载 Vulkan** —— 那是 FCL 上游本来的行为，本 fork 没有改动它。
+  >  但**手选 Zink / Freedreno 会加载 Vulkan** —— 那是 FCL 上游本来的行为，本 fork 没有改动它。
   > 在麒麟上大概率不能用，这就是为什么内置的默认渲染器是 MobileGlues。
 - **不再需要 MobileGlues 插件 APK。** `libmobileglues.so` 直接随本 APK 分发。
 
@@ -160,8 +160,7 @@ export JAVA_HOME=/path/to/jdk-17        # JDK 17
 
 ## 已知限制
 
-- **没有条件做真机回归。** 已完成的是源码级断言与产物级验证（无 Vulkan 符号与依赖、包名/ABI/
-  版本号/桌面名正确、FileProvider authority 跟着包名走），实机验证清单见 BUILD.md。
+- **仅在华为LRT-W30(harmony os 6.1.0)上做过验证** 就是说麒麟9030及其套壳型号可以正常使用release内的apk
 - `.so` 的页对齐是 4KB。与 FCL 上游自带的 `libgl4es_114.so` 等一致；若将来系统切到 16KB 页，
   需要给它们一起加 `-Wl,-z,max-page-size=16384` 重新构建。
 - `CurseForge` / `OAuth` 的 API key 拿不到，对应功能（整合包下载、微软登录）不可用。
