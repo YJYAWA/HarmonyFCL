@@ -212,5 +212,5 @@ export JAVA_HOME=/path/to/jdk-17        # JDK 17
 | [MobileGlues](https://github.com/MobileGL-Dev/MobileGlues) | **LGPL-2.1-only**，以独立共享库分发，完整修改版源码在 [`third_party/MobileGlues/`](third_party/MobileGlues/) |
 | glslang / SPIRV-Cross / xxhash / ska 等 | 见 [NOTICE.md](NOTICE.md) |
 
-感谢 **FoldCraftLauncher** 与 **MobileGlues** 两个上游项目，以及 MBE 键位的作者。
+感谢 **FoldCraftLauncher** 与 **MobileGlues** 两个上游项目。
 如果这个 fork 对你有用，也请去给上游点 star。
