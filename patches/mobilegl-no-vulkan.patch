@@ -1,0 +1,138 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8d5c780..a047516 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -310,11 +310,14 @@ set(SOURCE_FILES
+     MobileGL/MG_Util/ShaderTranspiler/SpirvPasses/DemotePointSizePass.cpp
+ 
+     MobileGL/MG_Util/BackendLoaders/OpenGL/Loader.cpp
+-    MobileGL/MG_Util/BackendLoaders/Vulkan/Loader.cpp
++    # PATCHED (mobilegl-no-vulkan): Vulkan Loader 摘除——它会 dlopen libvulkan.so。
+ 
+     MobileGL/MG_Util/SelfTest/DriverBugProbes.cpp
+     MobileGL/MG_Util/SelfTest/PersistentBufferOrderingProbe.cpp
+-    MobileGL/MG_Util/SelfTest/DriverPost.cpp
++    # PATCHED (mobilegl-no-vulkan): DriverPost 摘除。它是插件 APK 的诊断入口
++    # （PostActivity.nativeRunDriverPost），会在运行期 dlopen("libvulkan.so") 并真的
++    # 建 VkInstance 去探测。FCL 从不调用它，但按硬约束不该留在包里。
++    # DirectGLES 不引用任何 DriverPost:: 符号，摘掉是自洽的。
+     MobileGL/MG_Util/SelfTest/DriverPostIterationRPWitness.cpp
+     MobileGL/MG_Util/SelfTest/PrimitivesGeneratedNoXfbProbe.cpp
+ 
+@@ -363,25 +366,10 @@ set(SOURCE_FILES
+     MobileGL/MG_Backend/DirectGLES/Managers.cpp
+     MobileGL/MG_Backend/DirectGLES/MultiDraw.cpp
+ 
+-    MobileGL/MG_Backend/DirectVulkan/DirectVulkan.cpp
+-    MobileGL/MG_Backend/DirectVulkan/BackendObject_DirectVulkan.cpp
+-    MobileGL/MG_Backend/DirectVulkan/VmaImpl.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/VulkanRenderer.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/SwapchainObject.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/FrameContext.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/PipelineFactory.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/ProgramFactory.cpp
+-        MobileGL/MG_Backend/DirectVulkan/Renderer/UniformManager.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/BufferArena.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/VkBufferManager.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/VertexInputStateBuilder.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/VertexInputStateFactory.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/VkBufferObject.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/VkTextureManager.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/VkTimerQueryManager.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/VkSamplerManager.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/VkClearManager.cpp
+-    MobileGL/MG_Backend/DirectVulkan/Renderer/VkRenderPassManager.cpp
++    # PATCHED (mobilegl-no-vulkan): DirectVulkan 全部摘除。
++    # 本项目的硬约束是"任何情况下都不得调用 Vulkan"——麒麟 Maleoon 的 Vulkan
++    # 能力不足，选到就是黑屏。留着它还会让 libMobileGL.so 的 DT_NEEDED 带上
++    # libvulkan.so（加载期即解析），容器里没有就是整个 .so 加载失败。
+ 
+     MobileGL/MG_State/GLState/Core.cpp
+     MobileGL/MG_State/EGLState/Core.cpp
+@@ -429,7 +417,8 @@ endif()
+ 
+ if (ANDROID)
+     list(APPEND SOURCE_FILES
+-        MobileGL/MG_Util/SelfTest/DriverPostJni.cpp
++        # PATCHED (mobilegl-no-vulkan): DriverPostJni 是 DriverPost 的 JNI 壳
++        # （PostActivity.nativeRunDriverPost），随它一起摘除。
+         MobileGL/MG_Util/SelfTest/DriverBenchJni.cpp
+     )
+ endif()
+@@ -592,10 +581,13 @@ if (TRACY_ENABLE)
+ endif ()
+ 
+ if (ANDROID)
++    # PATCHED (mobilegl-no-vulkan): 去掉 `vulkan`。
++    # 这一行是 libMobileGL.so 的 DT_NEEDED 里 libvulkan.so 的唯一来源，而 DT_NEEDED
++    # 在**加载期**就解析——容器里没有这个文件的话 dlopen 整个失败，跟选哪个后端无关。
++    # DirectVulkan 的源码已同时摘除，所以这里不会留下未定义符号。
+     target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC
+         android
+         log
+-        vulkan
+     )
+ endif()
+ 
+diff --git a/MobileGL/ConfigLoader.cpp b/MobileGL/ConfigLoader.cpp
+index 3b8ba09..f8d094f 100644
+--- a/MobileGL/ConfigLoader.cpp
++++ b/MobileGL/ConfigLoader.cpp
+@@ -213,19 +213,16 @@ namespace MobileGL::MG_ConfigLoader {
+     }
+ 
+     inline void InitBackendType() {
++        // PATCHED (mobilegl-no-vulkan): 硬锁 DirectGLES。
++        // 原实现把后端做成 MOBILEGL_BACKEND_TYPE 环境变量可选项，本项目不允许
++        // 任何人（包括用户自己）把它切到 Vulkan——DirectVulkan 也根本没编进来。
+         String backendTypeStr;
+         QueryEnvVariable("MOBILEGL_BACKEND_TYPE", backendTypeStr, "DirectGLES");
+-#define ENTRY(backendType)                                                                                             \
+-    if (backendTypeStr == #backendType) {                                                                              \
+-        MG_Config::ActiveBackendType = BackendType::backendType;                                                       \
+-        MGLOG_I("Config: Active backend type set to " #backendType);                                                   \
+-        return;                                                                                                        \
+-    }
+-        ENTRY(DirectGLES)
+-        ENTRY(DirectVulkan)
+-        ENTRY(Unknown)
+-        MG_Config::ActiveBackendType = BackendType::Unknown;
+-#undef ENTRY
++        if (backendTypeStr != "DirectGLES") {
++            MGLOG_W("Config: MOBILEGL_BACKEND_TYPE=%s ignored - this build is DirectGLES-only",
++                    backendTypeStr.c_str());
++        }
++        MG_Config::ActiveBackendType = BackendType::DirectGLES;
+     }
+ 
+     void Init() {
+diff --git a/MobileGL/MG_Backend/BackendObjects.h b/MobileGL/MG_Backend/BackendObjects.h
+index 1a14882..61f515f 100644
+--- a/MobileGL/MG_Backend/BackendObjects.h
++++ b/MobileGL/MG_Backend/BackendObjects.h
+@@ -10,7 +10,7 @@
+ #include <Includes.h>
+ #include "BackendObject.h"
+ #include "DirectGLES/BackendObject_DirectGLES.h"
+-#include "DirectVulkan/BackendObject_DirectVulkan.h"
++// PATCHED (mobilegl-no-vulkan): DirectVulkan 已摘除，本项目不得调用 Vulkan。
+ 
+ namespace MobileGL::MG_Backend {
+     extern UniquePtr<BackendObject>& pActiveBackendObject;
+diff --git a/MobileGL/MG_Backend/Init.cpp b/MobileGL/MG_Backend/Init.cpp
+index fec4332..34f4083 100644
+--- a/MobileGL/MG_Backend/Init.cpp
++++ b/MobileGL/MG_Backend/Init.cpp
+@@ -52,8 +52,11 @@ namespace MobileGL::MG_Backend {
+         case BackendType::DirectGLES:
+             pActiveBackendObject = MakeUnique<DirectGLES::BackendObject_DirectGLES>();
+             break;
++        // PATCHED (mobilegl-no-vulkan): DirectVulkan 没有编进来，这里只留一个
++        // 明确的失败出口，而不是让链接期报未定义符号。
+         case BackendType::DirectVulkan:
+-            pActiveBackendObject = MakeUnique<DirectVulkan::BackendObject_DirectVulkan>();
++            MGLOG_W("DirectVulkan backend is not compiled in (mobilegl-no-vulkan)");
++            pActiveBackendObject = nullptr;
+             break;
+         case BackendType::Unknown:
+         default:

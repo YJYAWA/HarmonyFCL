@@ -34,7 +34,7 @@ import androidx.annotation.Nullable;
 
 import com.google.gson.GsonBuilder;
 import com.mio.JavaManager;
-import com.mio.autofix.PreferOpenGLFetcher;
+import com.mio.autofix.InstanceAutoFix;
 import com.mio.data.Renderer;
 import com.mio.manager.RendererManager;
 import com.mio.minecraft.ModCheckException;
@@ -278,15 +278,19 @@ public final class LauncherHelper {
                             return checkMod(fclBridge, repository.getGameVersion(selectedVersion).orElse(""), skip, scannedModsRef.get());
                         }).thenComposeAsync(fclBridge -> {
                             GameOption gameOption = new GameOption(repository.getRunDirectory(selectedVersion).getAbsolutePath());
-                            gameOption.set("preferredGraphicsBackend", setting.getGraphicsBackend());
                             gameOption.set("startedCleanly", "true");
                             // MC 26.2 起游戏会自己挑渲染后端，麒麟 Maleoon 的 Vulkan 能力不足，
-                            // 选到就是崩溃（本项目"绝不调用 Vulkan"硬约束）。这里写的就是 PreferOpenGL
-                            // 模组用的那个键，所以对已装模组的实例是幂等的；对原版 / NeoForge /
-                            // 模组还没支持到的版本，这是唯一一条确定生效的路。低于 26.2 的版本不认识它，不写。
-                            if (PreferOpenGLFetcher.maySelectVulkan(repository.getGameVersion(selectedVersion).orElse(""))) {
-                                gameOption.set("graphicsApiPreference", "prefer_opengl");
-                            }
+                            // 选到就是黑屏或者直接退出（本项目"绝不调用 Vulkan"硬约束）。
+                            //
+                            // 键名与取值都取自官方 options.txt：preferredGraphicsBackend = default / opengl / vulkan。
+                            // 必须写 opengl 而不是 default —— default 在启动时**仍会去探测 Vulkan**
+                            // （官方 26.2 更新日志原话），在没有 Vulkan 的设备上那正是要避免的事。
+                            // 26.2 以下的版本不认识这个键，保持用户在设置里选的值。
+                            String mcVersion = repository.getGameVersion(selectedVersion).orElse("");
+                            gameOption.set(
+                                    "preferredGraphicsBackend",
+                                    InstanceAutoFix.maySelectVulkan(mcVersion) ? "opengl" : setting.getGraphicsBackend()
+                            );
                             gameOption.save();
                             return Task.completed(fclBridge);
                         }).thenAcceptAsync(fclBridge -> Schedulers.androidUIThread().execute(() -> {

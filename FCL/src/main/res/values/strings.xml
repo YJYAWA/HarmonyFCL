@@ -1037,6 +1037,8 @@
     <string name="settings_fcl_renderer_nggl4es">Krypton Wrapper (OpenGL 3.1+)</string>
     <!-- 内置 MobileGlues：随 APK 分发，不需要单独的插件 APK -->
     <string name="settings_fcl_renderer_mobileglues" translatable="false">MobileGlues (OpenGL 4.0, 1.17+)</string>
+    <!-- 内置 MobileGL：26.3 起顶掉 MobileGlues。只编了 arm64-v8a。 -->
+    <string name="settings_fcl_renderer_mobilegl" translatable="false">MobileGL (OpenGL 4.6, 26.3+)</string>
 
     <string name="settings_fcl_driver">Vulkan Driver</string>
     <string name="settings_fcl_driver_desc">Choose the Vulkan driver implementation.</string>

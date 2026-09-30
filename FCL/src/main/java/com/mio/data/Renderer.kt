@@ -28,6 +28,16 @@ data class Renderer(
 
         /** 内置 MobileGlues（libmobileglues.so），ID 一旦发布不可更改 */
         const val ID_MOBILEGLUES = "3c9b1d47-2a86-4e51-9f0c-6d1e8b7a4c25"
+
+        /**
+         * 内置 MobileGL（libMobileGL.so），26.3 起顶掉 MobileGlues。ID 一旦发布不可更改。
+         *
+         * ⚠️ **只编了 arm64-v8a**，32 位包里没有这个 .so —— 选中一个没有对应 .so 的
+         * 渲染器会在启动时加载失败，所以判定要先问"这个包里到底有没有那个 .so"，
+         * 见 [com.mio.manager.RendererManager.canUseMobileGL] 与
+         * [com.mio.autofix.InstanceAutoFix.rendererFor]。
+         */
+        const val ID_MOBILEGL = "2e5a7c14-9d38-4b6f-a0e7-3c81f5d92b46"
     }
 
     fun getGLPath(): String {

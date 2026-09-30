@@ -33,12 +33,14 @@ wrapper 指向腾讯云镜像 —— 这是为国内网络准备的（Maven Cent
 
 ---
 
-## 2. （可选）重新构建 MobileGlues → `libmobileglues.so`
+## 2. （可选）重新构建渲染器库
 
-**这一步不是必需的。** 仓库已经内置了两个 ABI 的 `libmobileglues.so`
-（`FCL/src/main/jniLibs/<abi>/`，合计约 11MB），直接执行第 3 节就能出包。
+**这一步不是必需的。** 仓库已经内置了 `libmobileglues.so`（两个 ABI，合计约 11MB）和
+`libMobileGL.so`（**只有 arm64-v8a**，约 14MB），直接执行第 3 节就能出包。
 
-下面只在两种情况下需要：你想**自己验证**这个库确实不含 Vulkan，或者你想改 MobileGlues 的代码。
+下面只在两种情况下需要：你想**自己验证**这两个库确实不含 Vulkan，或者你想改它们的代码。
+
+### 2.1 MobileGlues → `libmobileglues.so`
 
 源码在 `third_party/MobileGlues/`，**已经打好「去 Vulkan」补丁**（子模块内容也已 vendored，
 不需要额外初始化子模块）。
@@ -85,6 +87,67 @@ cp build-armeabi-v7a/libmobileglues.so    ../../FCL/src/main/jniLibs/armeabi-v7a
 >
 > 自己构建的 `libmobileglues.so` 会与它们功能等价（第 4 节的三条验证命令都应通过），
 > 但字节不一定相同，所以不要拿哈希当构建是否成功的判据 —— **拿 Vulkan 断言当判据**。
+
+### 2.2 MobileGL → `libMobileGL.so`
+
+**只编 `arm64-v8a`。** 上游 MobileGL 不支持 `armeabi-v7a`，所以 32 位包里没有这个 `.so` ——
+`RendererManager.canUseMobileGL()` 会据此把 26.3 的实例留在 MobileGlues 上。
+上游**不发任何预编译产物**（Releases 与 Tags 都是空的），只能自己编。
+
+| 项 | 值 |
+| --- | --- |
+| 上游 | <https://github.com/MobileGL-Dev/MobileGL> |
+| 打补丁的基线提交 | `08124c99f12ab2283cc15e4dc64ea972ecbd49c1`（2026-09-30） |
+| 补丁 | `patches/mobilegl-no-vulkan.patch`（4 个文件，内容见第 4 节） |
+| 许可证 | **LGPL-3.0**（见第 10 节与 [NOTICE.md](NOTICE.md)） |
+
+```bash
+git clone https://github.com/MobileGL-Dev/MobileGL && cd MobileGL
+git checkout 08124c99f12ab2283cc15e4dc64ea972ecbd49c1
+git apply /path/to/patches/mobilegl-no-vulkan.patch
+
+# 子模块。DirectVulkan 摘掉之后 Vulkan-Headers 仍是**编译期**依赖：
+# MobileGL/Includes.h 无条件 #include <vulkan/vulkan.h>，`vulkan` 那个链接项才是
+# DT_NEEDED 的来源。所以别顺手把 Vulkan-Headers 也删了 —— 会编不过。
+git submodule update --init --recursive --depth 1
+
+NDK=/path/to/android-ndk              # 27.3.13750724 实测通过
+CMAKE=/path/to/cmake/bin/cmake        # 3.22.1 + ninja 实测通过；需要支持 C++23 的工具链
+
+$CMAKE -S . -B build-arm64-v8a -G Ninja \
+  -DCMAKE_MAKE_PROGRAM=/path/to/cmake/bin/ninja \
+  -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+  -DANDROID_ABI=arm64-v8a \
+  -DANDROID_PLATFORM=android-26 \
+  -DANDROID_STL=c++_static \
+  -DCMAKE_BUILD_TYPE=Release
+$CMAKE --build build-arm64-v8a --target MobileGL -j 8
+```
+
+> 子模块克隆卡住时（`git submodule update` 一次要拉 9 个仓库，很容易超时），可以按
+> `.gitmodules` 里记的提交逐个浅克隆：`git init` + `git fetch --depth 1 origin <sha>`
+> + `git checkout FETCH_HEAD`。glslang 自己还带两个**嵌套**子模块
+> （`External/spirv-tools`、`External/spirv-tools/external/spirv-headers`），
+> 那两层 `git submodule update` 不会替你拉，而 `CMakeLists.txt` 要链接
+> `SPIRV-Tools-opt`，缺了编不过。
+
+**编出来的 `libMobileGL.so` 约 265MB，必须 strip。** 即使 `CMAKE_BUILD_TYPE=Release`，
+glslang 那一侧的 CMake 仍然带调试信息（光 `.debug_info` 一节就 97MB；真正的 `.text` 只有 9MB）：
+
+```bash
+STRIP=$NDK/toolchains/llvm/prebuilt/<host>/bin/llvm-strip   # Windows 下 host=windows-x86_64
+$STRIP --strip-unneeded build-arm64-v8a/libMobileGL.so      # 265MB → 约 14MB
+
+mkdir -p ../../FCL/src/main/jniLibs/arm64-v8a
+cp build-arm64-v8a/libMobileGL.so ../../FCL/src/main/jniLibs/arm64-v8a/
+```
+
+> 仓库里预置的那份 strip 后 SHA-256 是
+> `c35a2e5b955c1090d34ac3eff8f74bd3dc5cd38e0f808c2ee56469130dd0ffd9`。
+> 与上面一样，**别拿哈希当构建是否成功的判据**，拿第 4 节的 Vulkan 断言当判据。
+>
+> `--strip-unneeded` 会保留 `.dynsym`（那份 .so 里有 12000+ 个默认可见导出），
+> FCL 靠 `eglGetProcAddress` 动态取 GL 入口，所以**不要**改用别的更激进的裁剪方式。
 
 ---
 
@@ -134,6 +197,24 @@ MobileGlues 原版里唯一会碰 Vulkan 的运行时路径是 `config/gpu_utils
 > 真正的判据是产物级断言（下面的第 2、3 条），那两条在任何情况下都必须无输出。
 > 如果你希望连头文件也一并清掉，删掉该目录即可，构建不受影响。
 
+MobileGL 侧的补丁（`patches/mobilegl-no-vulkan.patch`，4 个文件）做四件事：
+
+| 改动 | 文件 | 为什么 |
+| --- | --- | --- |
+| 摘掉 `DirectVulkan` 全部源码（19 个 .cpp） | `CMakeLists.txt` | 不编就不会被选到 |
+| 去掉 Android 的 `vulkan` 链接项 | `CMakeLists.txt` | 这是 `DT_NEEDED` 里 `libvulkan.so` 的**唯一**来源。`DT_NEEDED` 是**加载期**解析——容器里没有这个文件的话 `dlopen` 整个失败，与选哪个后端无关 |
+| 去掉 `BackendLoaders/Vulkan/Loader.cpp` 与 `SelfTest/DriverPost*.cpp` | `CMakeLists.txt` | 前者 `dlopen("libvulkan.so")`；后者的诊断入口运行期会建真的 `VkInstance`。DirectGLES 不引用 `DriverPost::` 的任何符号，所以摘掉是自洽的 |
+| 摘掉 `#include "DirectVulkan/BackendObject_DirectVulkan.h"` | `MG_Backend/BackendObjects.h` | 上面已经没这个文件了 |
+| `DirectVulkan` 分支改成明确的失败出口 | `MG_Backend/Init.cpp` | 否则是链接期报未定义符号，而不是运行时一条日志 |
+| `InitBackendType()` 硬锁 `DirectGLES` | `ConfigLoader.cpp` | 上游把后端暴露成 `MOBILEGL_BACKEND_TYPE` 环境变量（插件里甚至做成用户可切换的开关），这里改成环境变量说了不算 |
+
+> **必须连源码一起摘，不能只删那行链接。** DirectVulkan 自己的源文件直接调 `vk*`，
+> 只删链接项会立刻链接失败。
+>
+> 摘掉之后 `Vulkan-Headers` 仍然要留着：`MobileGL/Includes.h` 无条件
+> `#include <vulkan/vulkan.h>`，它是**编译期**依赖，但只出头文件、不产生链接依赖
+> （摘掉源码后 `CMakeLists.txt` 里也没有任何 Vulkan 静态库被链接进来）。
+
 FCL 侧新加的渲染器分支只写 `POJAV_RENDERER=opengles3`。这个值命中 `egl_bridge.c` 里的
 `strncmp(..., "opengles", 8)` 分支 → `RENDERER_GL4ES` + `set_gl_bridge_tbl()`，**不会**
 `load_vulkan()`。（FCL 里会加载 Vulkan 的取值是 `opengles3_desktopgl_zink_kopper`、`vulkan_zink`、
@@ -159,6 +240,27 @@ $BIN/llvm-strings third_party/MobileGlues/MobileGlues-cpp/build-arm64-v8a/libmob
 $BIN/llvm-readelf -d third_party/MobileGlues/MobileGlues-cpp/build-arm64-v8a/libmobileglues.so \
   | grep NEEDED              # → libandroid.so liblog.so libm.so libdl.so libc.so（无 libvulkan.so）
 ```
+
+MobileGL 侧多一条更硬的判据。前三条对 libMobileGL.so 同样适用
+（把路径换成 `FCL/src/main/jniLibs/arm64-v8a/libMobileGL.so`），另外：
+
+```bash
+MG=FCL/src/main/jniLibs/arm64-v8a/libMobileGL.so
+
+# 4) 没有任何**未定义的 Vulkan 符号**（关键断言，必须输出 0）
+#    这一条比第 2、3 条都硬：DT_NEEDED 干净只说明没有动态依赖库，
+#    静态链进来的 Vulkan 代码要靠这个才查得出来。
+$BIN/llvm-readelf --dyn-syms $MG | awk '$7=="UND" {print $8}' | grep -cE "^vk|^Vk"
+
+# 5) 这个 .so 必须是 AArch64，且 .dynsym 还在（FCL 靠 eglGetProcAddress 动态取 GL 入口）
+$BIN/llvm-readelf -h $MG | grep Machine          # → AArch64
+$BIN/llvm-readelf --dyn-syms $MG | grep -c "FUNC.*DEFAULT"   # → 12000 上下
+```
+
+> 第 2 条在 libMobileGL.so 上会命中**一条**：`VK_KHR_relaxed_block_layout extension`。
+> 那是 glslang 的**诊断消息文本**（它在报错时会念出 Vulkan 扩展名），是个字符串常量、
+> 不产生任何调用，属于 glslang 的一部分，不是残留的 Vulkan 路径。别把这条当成失败。
+> 判据以第 4 条为准 —— 未定义符号必须是 0。
 
 出包之后还可以在 **APK 本体**上再验一次（推荐，这才是真正发出去的东西）：
 
@@ -291,9 +393,16 @@ id 改写后三处天然一致，代码里的默认值一个字都不用改。
 
 - **没有条件做真机回归。** 已完成的验证是源码级断言与产物级检查（见第 4 节），
   以及包名 / ABI / 版本号 / 桌面名 / 内置资产 / FileProvider authority 的核对。
+  **MobileGL 这条路径尤其如此** —— 它连"能不能在麒麟上跑起来"都还没有实机确认过，
+  只确认了它满足第 4 节的四条断言、且导出的核心 GL 符号与 MobileGlues 逐一对齐（1383 个核心名）。
+- **MobileGL 只有 `arm64-v8a`。** 32 位包（`armeabi-v7a`）里没有 `libMobileGL.so`，
+  那种包上的 26.3 实例会留在 MobileGlues 上（即黑屏）。见 2.2 节。
+- **26.3 的快照 / rc 不会被切到 MobileGL。** 版本比较器里 `SNAPSHOT < RC < GA`，
+  所以 `26.3-snapshot-3` 排在 `26.3` 之前，落在 1.17~26.2 那一支。理由与代价见
+  [README 的「已知限制」](README.md#已知限制)。
 - `.so` 的页对齐是 4KB（`0x1000`），与 FCL 上游自带的 `libgl4es_114.so` 等一致。卓易通/鸿蒙
-  目前是 4KB 页，因此不构成问题；若将来系统切到 16KB 页，需要给 MobileGlues 与这些上游库
-  一起加 `-Wl,-z,max-page-size=16384` 重新构建。
+  目前是 4KB 页，因此不构成问题；若将来系统切到 16KB 页，需要给 MobileGlues、MobileGL 与这些
+  上游库一起加 `-Wl,-z,max-page-size=16384` 重新构建。
 - **CurseForge / OAuth 的 API key 拿不到**，构建产物里对应的 `resValue` 是空串。不影响启动游戏，
   只影响「CurseForge 整合包下载」与「微软登录」。
 - **独立 MobileGlues 插件 APK 没有做去重**：如果设备上也装了它，渲染器列表里会同时出现
@@ -311,11 +420,30 @@ id 改写后三处天然一致，代码里的默认值一个字都不用改。
 3. 游戏内 `glGetString(GL_VERSION)` 报告 4.0 级别（MobileGlues 的桌面上报）。
 4. 极端回归：往 `config.json` 里写 `{"enableANGLE": 3}`，再启动 → ANGLE 仍然必须是 disabled。
 5. 授权只弹了一次（FCL 自己那次）。
+6. **渲染器分段**：新建一个 MC 26.2 的实例 → 渲染器是 **MobileGlues**；再新建一个 26.3 的
+   → 自动变成 **MobileGL**，且渲染器列表里那一项显示 `>=26.3`。把 26.3 实例的渲染器手动改成
+   Zink 再重开启动器 → 应当被**改回** MobileGL（这一支刻意覆盖手选）。
+7. **26.3 实机能进游戏**（这是 MobileGL 唯一真正要证的命题）：启动 26.3 实例，确认过了
+   Mojang logo 之后**不再黑屏**。出问题先看是不是根本没加载到：`libMobileGL.so` 加载失败
+   会在 logcat 里留 `dlopen failed`。
+8. **32 位包回归**：装 `armeabi-v7a` 那个包（在 64 位设备上装也有效）→ 渲染器列表里
+   **不应该出现 MobileGL**，26.3 实例会留在 MobileGlues 上。
+   这一条同时也是 `canUseMobileGL()` 那个修正的回归：若换成按 `Build.SUPPORTED_ABIS` 判，
+   64 位设备会报告 `arm64-v8a` 而永远为真，于是选中一个**包里根本不存在**的 `.so`。
 
 ---
 
 ## 10. 许可证
 
 本 fork 是 FoldCraftLauncher 的衍生作品，**GPL-3.0**（见 `LICENSE`）。
-MobileGlues 是 **LGPL-2.1-only**，以独立共享库（`lib/<abi>/libmobileglues.so`）形式随 APK 分发，
-其**完整修改版源码**在 `third_party/MobileGlues/`。逐项的许可证与来源见 **[NOTICE.md](NOTICE.md)**。
+
+- **MobileGlues** 是 **LGPL-2.1-only**，以独立共享库（`lib/<abi>/libmobileglues.so`）形式随 APK
+  分发，其**完整修改版源码**在 `third_party/MobileGlues/`。
+- **MobileGL** 是 **LGPL-3.0**，以独立共享库（`lib/arm64-v8a/libMobileGL.so`）形式随 APK 分发。
+  与 MobileGlues 不同，它的源码**没有 vendored 进本仓库** —— 仓库里放的是
+  `patches/mobilegl-no-vulkan.patch` 加上一个钉死的上游提交
+  （`08124c99f12ab2283cc15e4dc64ea972ecbd49c1`，见 2.2 节），按那一节命令即可还原出
+  完整的修改版源码。它静态链进去的第三方（glslang / SPIRV-Cross / SPIRV-Reflect /
+  xxHash / asio / flat_hash_map 等）逐项列在 NOTICE.md。
+
+逐项的许可证与来源见 **[NOTICE.md](NOTICE.md)**。

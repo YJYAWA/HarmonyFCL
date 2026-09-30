@@ -31,18 +31,22 @@
 
 ## 本 fork 改了什么
 
-除了下面的七项，其余代码与上游 FoldCraftLauncher 一致。逐文件的改动见
+除了下面的九项，其余代码与上游 FoldCraftLauncher 一致。逐文件的改动见
 [`patches/fcl-embed-mobileglues.patch`](patches/fcl-embed-mobileglues.patch)。
+MobileGL 那一侧的裁剪另有一份
+[`patches/mobilegl-no-vulkan.patch`](patches/mobilegl-no-vulkan.patch)（打在上游 MobileGL 上）。
 
 | # | 改动 | 说明 |
 | --- | --- | --- |
-| 1 | **内嵌 MobileGlues，并设为默认渲染器** | `libmobileglues.so` 随 APK 分发，不再需要插件 APK |
+| 1 | **内嵌 MobileGlues 与 MobileGL** | 两个 `.so` 都随 APK 分发，不再需要插件 APK；全局默认仍是 MobileGlues |
 | 2 | **源码级移除全部 Vulkan 调用路径** | 见 [它**不会**做什么](#它不会做什么) |
 | 3 | **新建版本的默认 JVM 参数改为 `-XX:+UnlockExperimentalVMOptions -XX:UseSVE=0`** | 见 [默认 JVM 参数](#默认-jvm-参数) |
 | 4 | **改包名与应用名**：`com.harmony.fcl` / **Harmony FCL** | 与官方 FCL 共存，数据目录独立 |
 | 5 | **`-Darch` 支持架构列表**（`arm64,arm` 这样写） | 方便一次出多个 ABI 的包 |
-| 6 | **按 MC 版本自动匹配渲染器** | < 1.17 → Krypton Wrapper；≥ 1.17 → MobileGlues |
+| 6 | **按 MC 版本自动匹配渲染器** | < 1.17 → Krypton Wrapper；1.17~26.2 → MobileGlues；≥ 26.3 → MobileGL |
 | 7 | **每次打开启动器时做一次实例自检** | 见 [每次启动的实例自检](#每次启动的实例自检) |
+| 8 | **MC 26.2 起把图形后端钉死在 OpenGL** | 见 [MC 26.2 起的图形后端](#mc-262-起的图形后端) |
+| 9 | **MC 26.3 起换用 MobileGL** | 见 [MC 26.3 起的渲染器](#mc-263-起的渲染器) |
 
 > 默认键位**没有**改动，用的就是 FCL 上游自带的 `Default` 布局，见[默认键位](#默认键位)。
 
@@ -94,32 +98,85 @@
 ## 每次启动的实例自检
 
 **这是本 fork 对 FCL 的第 6、7 项改动。** 每次打开启动器时，会在后台（不阻塞启动）对所有
-游戏实例扫一遍并修正。全过程幂等，**只改实例自己的设置，不动全局**。修正四件事：
+游戏实例扫一遍并修正。全过程幂等，**只改实例自己的设置，不动全局**。修正三件事：
 
 | 项 | 行为 |
 | --- | --- |
 | **版本隔离** | **强制开启**（游戏目录落在 `.minecraft/versions/<id>/`）。这是刻意的——你在实例设置里关掉，下次打开启动器会被改回来。 |
-| **渲染器** | MC < 1.17 强制 Krypton Wrapper；MC ≥ 1.17 只在它被留成 Krypton Wrapper 时改回 MobileGlues，**你手选的 Zink / Virgl / GL4ES 一律保留**。 |
+| **渲染器** | MC < 1.17 强制 Krypton Wrapper；MC ≥ 26.3 强制 MobileGL；1.17 ~ 26.2 只在它被留成 Krypton Wrapper 时改回 MobileGlues，**你手选的 Zink / Virgl / GL4ES 一律保留**。 |
 | **`-XX:UseSVE=0`** | 该实例实际会用的 Java 主版本 < 17 时，从它的 `javaArgs` 里删掉这一项。 |
-| **MC ≥ 26.2 的图形后端** | 见下。 |
 
-**为什么渲染器要按版本切**：MobileGlues 的 `minMCver` 是 `1.17`，给更老的实例配它，启动时
-`checkRenderer` 会弹一个**不可取消**的对话框（点「取消」直接中止启动），每次启动都弹一次。
-Krypton Wrapper 则是无下界的，两者正好无缝覆盖全部版本。
+**为什么渲染器要按版本切**：这几个渲染器的 `minMCver` 不是"仅显示"，启动时
+`checkRenderer` 会拿它和实际 MC 版本比，**超出范围就弹一个不可取消的对话框**
+（点「取消」直接中止启动），每次启动都弹一次。MobileGlues 的 `minMCver` 是 `1.17`，
+MobileGL 的是 `26.3`；Krypton Wrapper 没有下界、MobileGlues 与 MobileGL 都没有上界，
+所以三支正好无缝覆盖全部版本——连 1.0 都不会缺渲染器。
 
-**为什么 MC ≥ 26.2 要额外处理**：26.2 起游戏会自己挑图形后端，可能选到 Vulkan——而麒麟
-Maleoon 的 Vulkan 能力不足（这正是本项目「绝不调用 Vulkan」的由来），选到就崩。对策分两条：
+**26.3 那一支刻意无视你的手选**，因为留在 MobileGlues 上是必然黑屏，不是偏好问题。
+32 位包（`armeabi-v7a`）里没有 `libMobileGL.so`，所以那种包不会切到 MobileGL：
+`RendererManager.canUseMobileGL()` 查的是**本进程实际加载 `.so` 的目录里有没有这个文件**，
+判不通过就维持 MobileGlues。
 
-- **有加载器**（fabric / quilt / forge）：自动把
-  [PreferOpenGL](https://modrinth.com/mod/preferopengl) 模组下载到实例的 `mods/` 目录，
-  由它把后端钉死在 OpenGL。
-- **其余**（原版 / NeoForge / 模组尚未支持的版本）：往该实例的 JVM 参数追加
-  `-Dminecraft.forceOpenGL=true`。
+> 这里**不能**用 `Build.SUPPORTED_ABIS` 判——那是设备级的：64 位设备上装 32 位包，
+> 它照样含 `arm64-v8a`，可包里根本没有那个 `.so`。
 
-> ⚠️ PreferOpenGL 的许可证是 `LicenseRef-All-Rights-Reserved`（保留所有权利），而本仓库是
-> 公开仓库 —— **它的 jar 不会被编译进 APK**，而是首次联网时下载到应用私有目录
-> `Android/data/com.harmony.fcl/files/preferopengl/` 缓存，之后离线复用。
-> **纯离线的首次运行拿不到模组**，那条路会退回 JVM 参数。
+## MC 26.2 起的图形后端
+
+**这是本 fork 对 FCL 的第 8 项改动。** 26.2 起游戏会自己挑图形后端，可能选到 Vulkan——
+而麒麟 Maleoon 的 Vulkan 能力不足（这正是本项目「绝不调用 Vulkan」的由来），选到就是
+**黑屏或者直接退出**。
+
+对策只有一条：**每次启动前，把该实例 `options.txt` 里的 `preferredGraphicsBackend`
+写成 `opengl`**，判定条件是 MC ≥ 26.2（含 `26w14a` 起的快照）。这一步在 `LauncherHelper`
+的启动路径上，每次启动都落一次盘；低于 26.2 的版本不认识这个键，保持你在设置里选的值。
+
+**必须是 `opengl` 而不是 `default`。** 官方 26.2 更新日志写明：设成 `default` 时，游戏在
+启动阶段**仍然会去探测 Vulkan**；只有明确写 `opengl` 才是"完全不与 Vulkan 交互"。
+
+选这条路的理由是它**不依赖联网、不依赖模组、不依赖加载器**，原版和 NeoForge 一样管用。
+
+> 曾经试过把 [PreferOpenGL](https://modrinth.com/mod/preferopengl) 模组下进实例的 `mods/`，
+> 或者给实例追加 `-Dminecraft.forceOpenGL=true`。**两条都已废弃**：前者的许可证是
+> `LicenseRef-All-Rights-Reserved`（保留所有权利），公开仓库不能分发它，而且它做的本来
+> 就是写同一个 `options.txt` 键——多一层联网依赖换不来任何确定性；后者这个 JVM 属性从未
+> 被证实存在。
+
+## MC 26.3 起的渲染器
+
+**这是本 fork 对 FCL 的第 9 项改动。** 26.3 起 MC 的 **OpenGL 路径也改用 ShaderC 编译
+shader**（与 Vulkan 同一套）。MobileGlues 是架在宿主 GLES 驱动之上的薄转译层，应用的桌面
+GLSL 会直接喂给宿主驱动，在这个区间表现为**过 Mojang logo 之后黑屏**；26.3 还引入了 OIT
+（34 个 `oit_*` shader）和 SDL3 窗口层，进一步加重。
+
+对策是换用 [MobileGL](https://github.com/MobileGL-Dev/MobileGL)：它自建完整 GL 状态机，
+shader 链路是 `GLSL → glslang → SPIR-V → SPIRV-Cross → ESSL`，**宿主 ES 驱动从头到尾看不到
+应用的桌面 GLSL**。判定条件是 MC ≥ 26.3，同样在启动器启动时做（见上一节）。
+
+> **26.3 的快照与 rc 不算"≥ 26.3"** —— 版本比较器里
+> `UNKNOWN < SNAPSHOT < PRE_RELEASE < RC < GA`，所以 `26.3-snapshot-3` 排在 `26.3`
+> 之前，那些实例留在 MobileGlues 上。这是刻意的：`minMCver` 会原样显示成渲染器列表里的
+> `>=26.3`，要连快照一起收进来就得写成 `26.3-snapshot-1`。代价见[已知限制](#已知限制)。
+
+### 内置的 MobileGL 是裁剪过的
+
+上游 MobileGL 有两条后端：`DirectGLES`（默认，纯 GLES）和 `DirectVulkan`。本 fork 的硬约束
+是**任何情况下都不调用 Vulkan**，所以内置的 `.so` 是在上游源码上打过
+[`patches/mobilegl-no-vulkan.patch`](patches/mobilegl-no-vulkan.patch) 之后编出来的。
+那块补丁做四件事：
+
+| 裁剪 | 为什么 |
+| --- | --- |
+| 摘除 `DirectVulkan` 全部源码 | 不编就不会被选到。只删下面那行 `vulkan` 链接会直接链接失败，因为 DirectVulkan 自己就在调 `vk*`。 |
+| 去掉 Android 的 `vulkan` 链接项 | 这是 `libMobileGL.so` 的 `DT_NEEDED` 里 `libvulkan.so` 的**唯一**来源。`DT_NEEDED` 是**加载期**解析——容器里没有这个文件的话 `dlopen` 整个失败，与选哪个后端无关。 |
+| 硬锁后端为 `DirectGLES` | 上游把后端暴露成 `MOBILEGL_BACKEND_TYPE` 环境变量（插件里甚至做成用户可切换的开关），这里改成环境变量说了不算。 |
+| 摘除 `DriverPost` | 上游的诊断入口会在运行期 `dlopen("libvulkan.so")` 并真的建 `VkInstance` 去探测。FCL 从不调用它，但按硬约束不该留在包里。 |
+
+> ⚠️ **MobileGL 只编了 `arm64-v8a`**（上游就不支持 `armeabi-v7a`）。所以
+> `-Darch=arm64,arm` 出的那个 **arm 包里没有 MobileGL**，32 位设备上 26.3 实例会留在
+> MobileGlues。
+>
+> 构建它需要 NDK `27.3.13750724` + C++23 + 全部 submodule——上游**不发预编译产物**
+> （Releases 与 Tags 都是空的），只能自己编，并接受 LGPL-3.0 的条款。
 
 ## 它**不会**做什么
 
@@ -127,11 +184,17 @@ Maleoon 的 Vulkan 能力不足（这正是本项目「绝不调用 Vulkan」的
   ANGLE 与它的深度清除修正被硬编码关闭；FCL 侧新增的渲染器分支只写
   `POJAV_RENDERER=opengles3`（命中 `egl_bridge.c` 的 `opengles` 前缀分支 → GL4ES 桥接表）。
   可复现的验证命令见 [BUILD.md](BUILD.md#关于绝不调用-vulkan)。
+- **内置的 MobileGL 是源码级裁掉 Vulkan 的版本。** DirectVulkan 后端整个不编、
+  `libvulkan.so` 不进 `DT_NEEDED`（容器里有没有这个文件都不影响加载）、后端硬锁
+  `DirectGLES`、诊断入口 `DriverPost` 一并摘除。见
+  [MC 26.3 起的渲染器](#mc-263-起的渲染器)。
 - **不覆盖 FCL 自带的其它渲染器。** Nggl4es / GL4ES / VirGL / VGPU / Zink / Freedreno 都还在，
   可以手动选。
 
   >  但**手选 Zink / Freedreno 会加载 Vulkan** —— 那是 FCL 上游本来的行为，本 fork 没有改动它。
-  > 在麒麟上大概率不能用，这就是为什么内置的默认渲染器是 MobileGlues。
+  > 在麒麟上大概率不能用。这就是为什么内置的默认渲染器是 MobileGlues：**只有 MobileGlues
+  > 和 MobileGL 这两条路是被改造过的**——前者的 Vulkan 探测被换成 `return 0;`，
+  > 后者干脆没编 Vulkan 后端。
 - **不再需要 MobileGlues 插件 APK。** `libmobileglues.so` 直接随本 APK 分发。
 
 ## 只需要授一次权
@@ -199,6 +262,19 @@ export JAVA_HOME=/path/to/jdk-17        # JDK 17
 ## 已知限制
 
 - **仅在华为LRT-W30(harmony os 6.1.0)上做过验证** 就是说麒麟9030及其套壳型号可以正常使用release内的apk
+- **MobileGL 只有 `arm64-v8a`。** 32 位包（`armeabi-v7a`）里没有 `libMobileGL.so`，那种包上
+  26.3 的实例会留在 MobileGlues 上（也就是黑屏）。这是上游的限制，不是裁剪造成的。
+- **MobileGL 这条路径还没有上过真机。** 已完成的是静态验证：它满足「绝不调用 Vulkan」的
+  全部断言（`DT_NEEDED` 无 `libvulkan.so`、无 `libvulkan` 字符串、**无未定义的 `vk*` 符号**），
+  且导出的核心 GL 符号与 MobileGlues 逐一对齐（两边各 1383 个核心名）。**「26.3 到底还黑不黑屏」
+  只有实机能回答** —— 这正是整个改动的目的，装包后请优先验这一条。
+- **26.3 的快照 / rc 版本不会被自动切到 MobileGL。** 它们排序在 `26.3` 正式版之前
+  （见 [MC 26.3 起的渲染器](#mc-263-起的渲染器)），所以留在 MobileGlues 上——那个区间就是
+  黑屏。手动去渲染器列表里选 MobileGL 能绕过自动判定，但 `checkRenderer` 每次启动都会
+  弹一次提示（MobileGL 的 `minMCver` 是 `26.3`），点「继续」才进得去游戏。
+  这是划粗线的代价，不是漏判。要收进来就把 `RendererManager.RENDERER_MOBILEGL` 的
+  `minMCver`、`InstanceAutoFix.MOBILEGL_MIN_MC` 和 `Renderer.kt` 的注释一起改成
+  `26.3-snapshot-1`，测试里的 `26_3 的快照排在正式版之前` 也要一并改。
 - `.so` 的页对齐是 4KB。与 FCL 上游自带的 `libgl4es_114.so` 等一致；若将来系统切到 16KB 页，
   需要给它们一起加 `-Wl,-z,max-page-size=16384` 重新构建。
 - `CurseForge` / `OAuth` 的 API key 拿不到，对应功能（整合包下载、微软登录）不可用。
@@ -210,7 +286,11 @@ export JAVA_HOME=/path/to/jdk-17        # JDK 17
 | --- | --- |
 | 本 fork（FoldCraftLauncher 衍生） | **GPL-3.0**，见 [LICENSE](LICENSE) |
 | [MobileGlues](https://github.com/MobileGL-Dev/MobileGlues) | **LGPL-2.1-only**，以独立共享库分发，完整修改版源码在 [`third_party/MobileGlues/`](third_party/MobileGlues/) |
-| glslang / SPIRV-Cross / xxhash / ska 等 | 见 [NOTICE.md](NOTICE.md) |
+| [MobileGL](https://github.com/MobileGL-Dev/MobileGL) | **LGPL-3.0**，以独立共享库分发，**源码未 vendored**——仓库里放的是补丁 + 钉死的上游提交，见 [NOTICE.md](NOTICE.md) |
+| glslang / SPIRV-Cross / SPIRV-Tools / xxhash / ska 等 | 见 [NOTICE.md](NOTICE.md) |
 
-感谢 **FoldCraftLauncher** 与 **MobileGlues** 两个上游项目。
+> MobileGL 那一栏的合规安排**弱于** MobileGlues 那一栏（后者给了完整源码，前者只给补丁与
+> 上游指针）。下游再分发者请自行确认这够不够，详见 [NOTICE.md](NOTICE.md) 里的说明。
+
+感谢 **FoldCraftLauncher**、**MobileGlues** 与 **MobileGL** 三个上游项目。
 如果这个 fork 对你有用，也请去给上游点 star。
