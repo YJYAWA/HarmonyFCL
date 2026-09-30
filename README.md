@@ -31,7 +31,7 @@
 
 ## 本 fork 改了什么
 
-除了下面的五项，其余代码与上游 FoldCraftLauncher 一致。逐文件的改动见
+除了下面的七项，其余代码与上游 FoldCraftLauncher 一致。逐文件的改动见
 [`patches/fcl-embed-mobileglues.patch`](patches/fcl-embed-mobileglues.patch)。
 
 | # | 改动 | 说明 |
@@ -41,6 +41,8 @@
 | 3 | **新建版本的默认 JVM 参数改为 `-XX:+UnlockExperimentalVMOptions -XX:UseSVE=0`** | 见 [默认 JVM 参数](#默认-jvm-参数) |
 | 4 | **改包名与应用名**：`com.harmony.fcl` / **Harmony FCL** | 与官方 FCL 共存，数据目录独立 |
 | 5 | **`-Darch` 支持架构列表**（`arm64,arm` 这样写） | 方便一次出多个 ABI 的包 |
+| 6 | **按 MC 版本自动匹配渲染器** | < 1.17 → Krypton Wrapper；≥ 1.17 → MobileGlues |
+| 7 | **每次打开启动器时做一次实例自检** | 见 [每次启动的实例自检](#每次启动的实例自检) |
 
 > 默认键位**没有**改动，用的就是 FCL 上游自带的 `Default` 布局，见[默认键位](#默认键位)。
 
@@ -50,10 +52,10 @@
 | --- | --- |
 | 包名 | `com.harmony.fcl` |
 | 桌面显示名 | **Harmony FCL** |
-| 版本 | `1.3.3.5`（`versionCode` 1336，与上游同版本号区分开） |
+| 版本 | `1.3.3.6`（`versionCode` 1337 = 上游 + 1） |
 | 产物名 | `HarmonyFCL-<版本>-<abi>.apk`，每个 ABI 一个包 |
 | 签名 | 自签名，**密钥不随仓库分发**（见[签名密钥](#签名密钥)） |
-| 上游基线 | FoldCraftLauncher `72e1566` / MobileGlues `2.0.0` |
+| 上游基线 | FoldCraftLauncher tag `1.3.3.6` / MobileGlues `2.0.0` |
 
 包名与官方 FCL（`com.tungsten.fcl`）**不同**，所以**不需要先卸载官方版**：两者可以共存，
 数据目录也各自独立（`Android/data/com.harmony.fcl`）。
@@ -73,15 +75,51 @@
 
 **这两个参数的行为边界**（都实测过，别想当然）：
 
-- **原样传给 JVM，启动器不做任何按架构 / Java 版本的过滤。** 你在 x86 上装它也会照传。
+- **全局参数不做任何过滤，但每个实例的这项参数会被启动器按需修正。**「全局 Java 虚拟机参数」
+  原样传给 JVM、启动器不碰；而**每个实例自己的** `javaArgs`，在**该实例实际会用到的那份 Java
+  主版本 < 17** 时，`-XX:UseSVE=0` 会被自动删掉 —— Java 8 见到它会以
+  `Unrecognized VM option 'UseSVE'` 直接退出。判定依据是该实例的 Java 设置（`Auto` 时用
+  启动器推荐的那份），所以老版本实例开箱即用，不需要你手动去删。
+  见[每次启动的实例自检](#每次启动的实例自检)。
 - **只影响新建的版本。** 已经存在的版本，存档 JSON 里原本写的是什么就还是什么 ——
   反序列化时以存档里的值为准，缺失的键才回落新默认值。所以升级不会改掉你已有的配置。
 - **如果某个 Java 不认这两个选项**（日志里报 `Unrecognized VM option`），
   把设置里那个输入框的内容**删空**即可，删了不会被自动加回。
+  （上面那条自动修正只针对 `-XX:UseSVE=0`；`-XX:+UnlockExperimentalVMOptions` 不会被自动处理。）
 - 为什么是"两个一起"：`-XX:+UnlockExperimentalVMOptions` 本身不改变 JVM 行为，它只是放开
   实验性选项的开关。不同的 JDK 发行版对 `UseSVE` 的归类不一致（产品选项 / 实验性选项），
   带上它才能保证各家构建都收得下。**要缩到只剩一个**的话，先确认你的 Java 不报
   `Unrecognized VM option 'UseSVE'` 再删掉前者。
+
+## 每次启动的实例自检
+
+**这是本 fork 对 FCL 的第 6、7 项改动。** 每次打开启动器时，会在后台（不阻塞启动）对所有
+游戏实例扫一遍并修正。全过程幂等，**只改实例自己的设置，不动全局**。修正四件事：
+
+| 项 | 行为 |
+| --- | --- |
+| **版本隔离** | **强制开启**（游戏目录落在 `.minecraft/versions/<id>/`）。这是刻意的——你在实例设置里关掉，下次打开启动器会被改回来。 |
+| **渲染器** | MC < 1.17 强制 Krypton Wrapper；MC ≥ 1.17 只在它被留成 Krypton Wrapper 时改回 MobileGlues，**你手选的 Zink / Virgl / GL4ES 一律保留**。 |
+| **`-XX:UseSVE=0`** | 该实例实际会用的 Java 主版本 < 17 时，从它的 `javaArgs` 里删掉这一项。 |
+| **MC ≥ 26.2 的图形后端** | 见下。 |
+
+**为什么渲染器要按版本切**：MobileGlues 的 `minMCver` 是 `1.17`，给更老的实例配它，启动时
+`checkRenderer` 会弹一个**不可取消**的对话框（点「取消」直接中止启动），每次启动都弹一次。
+Krypton Wrapper 则是无下界的，两者正好无缝覆盖全部版本。
+
+**为什么 MC ≥ 26.2 要额外处理**：26.2 起游戏会自己挑图形后端，可能选到 Vulkan——而麒麟
+Maleoon 的 Vulkan 能力不足（这正是本项目「绝不调用 Vulkan」的由来），选到就崩。对策分两条：
+
+- **有加载器**（fabric / quilt / forge）：自动把
+  [PreferOpenGL](https://modrinth.com/mod/preferopengl) 模组下载到实例的 `mods/` 目录，
+  由它把后端钉死在 OpenGL。
+- **其余**（原版 / NeoForge / 模组尚未支持的版本）：往该实例的 JVM 参数追加
+  `-Dminecraft.forceOpenGL=true`。
+
+> ⚠️ PreferOpenGL 的许可证是 `LicenseRef-All-Rights-Reserved`（保留所有权利），而本仓库是
+> 公开仓库 —— **它的 jar 不会被编译进 APK**，而是首次联网时下载到应用私有目录
+> `Android/data/com.harmony.fcl/files/preferopengl/` 缓存，之后离线复用。
+> **纯离线的首次运行拿不到模组**，那条路会退回 JVM 参数。
 
 ## 它**不会**做什么
 

@@ -14,7 +14,10 @@ FoldCraftLauncher 自身的源码**，其余组件均为原样使用。
 
 - 上游：<https://github.com/FCL-Team/FoldCraftLauncher>
 - 许可证：**GPL-3.0**（[LICENSE](LICENSE)）
-- 本仓库基线提交：`72e156685d59ac3d338a7616f76f7094b57ac34e`
+- 本仓库基线版本：tag **`1.3.3.6`**
+  （该 tag 的树内容与提交 `72e156685d59ac3d338a7616f76f7094b57ac34e` 之间的差异已全部并入本仓库；
+  由于本 fork 是以单个压缩提交发布的、与上游**没有共同祖先**，同步方式是逐文件套用上游 diff，
+  而非 `git merge`）
 - 本 fork 的改动：见 [`patches/fcl-embed-mobileglues.patch`](patches/fcl-embed-mobileglues.patch)
   （内置 MobileGlues 渲染器、改默认渲染器与默认 JVM 参数、改包名与应用名、`-Darch` 支持架构列表）
 

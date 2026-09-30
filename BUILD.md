@@ -104,7 +104,7 @@ export JAVA_HOME=/path/to/jdk-17
 ./gradlew :FCL:assembleRelease -Darch=arm      # 只出 v7a
 ```
 
-产物：`FCL/build/outputs/apk/release/HarmonyFCL-1.3.3.5-<abi>.apk`（每个约 190–200MB，
+产物：`FCL/build/outputs/apk/release/HarmonyFCL-1.3.3.6-<abi>.apk`（每个约 190–200MB，
 其中 JRE 资产占大头）。
 
 ---
@@ -163,13 +163,13 @@ $BIN/llvm-readelf -d third_party/MobileGlues/MobileGlues-cpp/build-arm64-v8a/lib
 出包之后还可以在 **APK 本体**上再验一次（推荐，这才是真正发出去的东西）：
 
 ```bash
-unzip -o -j HarmonyFCL-1.3.3.5-arm64-v8a.apk 'lib/arm64-v8a/libmobileglues.so' -d /tmp/apkcheck
+unzip -o -j HarmonyFCL-1.3.3.6-arm64-v8a.apk 'lib/arm64-v8a/libmobileglues.so' -d /tmp/apkcheck
 $BIN/llvm-strings /tmp/apkcheck/libmobileglues.so | grep -i "libvulkan\|vkCreateInstance\|VkInstance"
 $BIN/llvm-readelf -d /tmp/apkcheck/libmobileglues.so | grep NEEDED
 
 # 包名 / versionCode / ABI / 桌面名
-$ANDROID_HOME/build-tools/35.0.0/aapt2 dump badging HarmonyFCL-1.3.3.5-arm64-v8a.apk
-#   → package: name='com.harmony.fcl' versionCode='1336' versionName='1.3.3.5'
+$ANDROID_HOME/build-tools/35.0.0/aapt2 dump badging HarmonyFCL-1.3.3.6-arm64-v8a.apk
+#   → package: name='com.harmony.fcl' versionCode='1337' versionName='1.3.3.6'
 #     application-label:'Harmony FCL'   native-code: 'arm64-v8a'
 ```
 
@@ -207,7 +207,7 @@ keytool -genkeypair -keystore harmony-fcl.jks -storetype JKS -alias harmonyfcl \
 验证签名：
 
 ```bash
-$ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs HarmonyFCL-1.3.3.5-arm64-v8a.apk
+$ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs HarmonyFCL-1.3.3.6-arm64-v8a.apk
 keytool -list -v -keystore harmony-fcl.jks
 ```
 
@@ -221,8 +221,8 @@ keytool -list -v -keystore harmony-fcl.jks
 
 | 文件 | 包名 | 用途 |
 | --- | --- | --- |
-| `HarmonyFCL-1.3.3.5-arm64-v8a.apk` | `com.harmony.fcl` | 麒麟机型（64 位）—— 推荐 |
-| `HarmonyFCL-1.3.3.5-armeabi-v7a.apk` | `com.harmony.fcl` | 32 位环境 |
+| `HarmonyFCL-1.3.3.6-arm64-v8a.apk` | `com.harmony.fcl` | 麒麟机型（64 位）—— 推荐 |
+| `HarmonyFCL-1.3.3.6-armeabi-v7a.apk` | `com.harmony.fcl` | 32 位环境 |
 
 包名与官方 FCL（`com.tungsten.fcl`）不同，所以**不需要先卸载官方版**，两者可以共存，
 数据目录各自独立（`Android/data/com.harmony.fcl`）。

@@ -1,14 +1,14 @@
 让 FoldCraftLauncher 变成 HarmonyFCL 的全部源码与构建配置改动
 ================================================================
 
-基线：FoldCraftLauncher 上游提交 72e156685d59ac3d338a7616f76f7094b57ac34e
+基线：FoldCraftLauncher 上游 **tag 1.3.3.6**
       （https://github.com/FCL-Team/FoldCraftLauncher）
 
 应用方式（在干净的上游检出里，仓库根目录执行）：
 
     git apply -p1 patches/fcl-embed-mobileglues.patch
 
-本补丁覆盖范围 = **源码与构建配置**：FCL/ 模块下的 Java/Kotlin/资源/Gradle 配置，
+本补丁覆盖范围 = **源码与构建配置**：FCL/ 模块下的 Java/Kotlin/源码资源/Gradle 配置，
 加上 gradle.properties、settings.gradle.kts、gradle/wrapper/gradle-wrapper.properties、
 .gitignore、.gitattributes。
 
@@ -18,12 +18,33 @@
   * FCL/src/main/jniLibs/*/libmobileglues.so
                                —— 由上面那份源码构建出的二进制（见 BUILD.md 的构建步骤）
   * patches/mobileglues-no-vulkan.patch
-                               —— MobileGlues 侧的去 Vulkan 改动，单独一个补丁
+                               —— MobileGlues 侧去 Vulkan 的改动，是另一份补丁
   * README.md / BUILD.md / NOTICE.md
-                               —— 本 fork 自己的文档，不属于源码改动
+                               —— 本 fork 自己写的文档，不属于源码改动
+
+---
+
+重新生成本补丁的方法（同步到新的上游版本时要重做一遍）
+
+本仓库是以**单个压缩提交**发布的，与上游没有共同祖先，所以没法用 git merge，
+只能把上游的增量逐文件套用。补丁本身因此也要跟着重算：
+
+  1. **还原旧基线的原文**：把本补丁用 patch -R -p1 反推到本仓库当前版本的对应文件上，
+     得到本补丁所声明基线（tag 1.3.3.6）的上游原文
+  2. **叠加到新基线**：把上游在「旧基线 → 新基线」区间的 diff 应用到第 1 步的结果上
+  3. **重出补丁**：用 diff -u 加 --label a/<路径> --label b/<路径> 逐个比对新基线原文与
+     本仓库当前文件，前面补一行 diff --git a/<路径> b/<路径>（新增文件再加
+     new file mode 100644）拼起来
+
+第 2 步那个区间 diff 的取法（本机 git fetch 走不通，只能走 API）：
+
+    https://api.github.com/repos/FCL-Team/FoldCraftLauncher/compare/<旧>...refs/tags/<新>
+
+生成的补丁必须验证：在干净的上游检出上 git apply --check 通过，且应用后与仓库内容一致。
+注意本仓库的 blob 是 LF、Windows 检出是 CRLF —— 比对前先把 CRLF 归一化成 LF，
+否则会全线报不一致。
 
 diff --git a/.gitattributes b/.gitattributes
-index ac7dedf..84cd648 100644
 --- a/.gitattributes
 +++ b/.gitattributes
 @@ -3,3 +3,6 @@
@@ -34,10 +55,9 @@ index ac7dedf..84cd648 100644
 +# Windows 批处理显式写死 CRLF：`* text=auto` 在 core.autocrlf=false 的机器上会把 .bat 检出为 LF
 +*.bat text eol=crlf
 diff --git a/.gitignore b/.gitignore
-index bc8ee8a..8d8541c 100644
 --- a/.gitignore
 +++ b/.gitignore
-@@ -35,3 +35,15 @@ AGENTS.md
+@@ -35,3 +35,15 @@
  /.zcode/
  .kotlin/
  .zcodeignore
@@ -54,10 +74,9 @@ index bc8ee8a..8d8541c 100644
 +/third_party/MobileGlues/MobileGlues-cpp/build-*/
 +/third_party/MobileGlues/dist/
 diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
-index c5e2c09..f22e184 100644
 --- a/FCL/build.gradle.kts
 +++ b/FCL/build.gradle.kts
-@@ -19,6 +19,31 @@ checkstyle {
+@@ -19,6 +19,31 @@
      configFile = rootProject.file("config/checkstyle/checkstyle.xml")
  }
  
@@ -89,7 +108,7 @@ index c5e2c09..f22e184 100644
  // AGP 不提供 Java 插件的 SourceSetContainer，checkstyle 插件不会自动创建任务，
  // 因此手动注册 checkstyle 任务，检查范围为主源码目录的 Java 文件
  tasks.register<Checkstyle>("checkstyle") {
-@@ -31,6 +56,35 @@ tasks.register<Checkstyle>("checkstyle") {
+@@ -31,6 +56,35 @@
      maxWarnings = 0
  }
  
@@ -125,7 +144,7 @@ index c5e2c09..f22e184 100644
  android {
      namespace = "com.tungsten.fcl"
      compileSdk = libs.versions.compileSdk.get().toInt()
-@@ -64,13 +118,25 @@ android {
+@@ -64,13 +118,27 @@
              keyAlias = "FCL-Debug"
              keyPassword = "FCL-Debug"
          }
@@ -146,19 +165,41 @@ index c5e2c09..f22e184 100644
 +        applicationId = "com.harmony.fcl"
          minSdk = libs.versions.minSdk.get().toInt()
          targetSdk = libs.versions.targetSdk.get().toInt()
--        versionCode = 1335
-+        // 内置 MobileGlues 的 fork 版本：versionCode 与上游 1.3.3.5(1335) 区分开，
-+        // versionName 保持不动（FCL 自身有基于 versionName 的解析）
-+        versionCode = 1336
-         versionName = "1.3.3.5"
+-        versionCode = 1336
++        // 内置 MobileGlues 的 fork 版本。两条约定：
++        //   versionName 与上游同步（FCL 自身有基于 versionName 的解析，不能自作主张）
++        //   versionCode 取上游 +1，与官方包区分开——本 fork 包名是 com.harmony.fcl，
++        //   本就可与官方版共存，versionCode 只用于自己这边的升级判定
++        versionCode = 1337
+         versionName = "1.3.3.6"
          testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
          externalNativeBuild {
-@@ -80,23 +146,34 @@ android {
+@@ -80,23 +148,54 @@
          }
      }
  
 -    testBuildType = "fordebug"
 +    testBuildType = "debug"
++
++    // 单元测试也要能读到 /assets/game/versions.txt。GameVersionNumber 的静态初始化会用它
++    // （Android 上靠 APK 的 zip 条目解析，JVM 单测的 classpath 里没有）。
++    // 不挂的话，任何碰 GameVersionNumber 的测试都会拿到 ExceptionInInitializerError，
++    // 然后被各处的 runCatching 吞掉、悄悄跑到回落分支——看着是绿的，其实什么都没验到。
++    //
++    // 不能直接 srcDir("src/main/assets")：那样资源根变成 assets/ 本身，只会得到
++    // /game/versions.txt，和代码要的 /assets/game/versions.txt 对不上。
++    // 所以先生成一份只含 assets/game/ 的资源根。
++    val unitTestGameAssets = tasks.register<Sync>("unitTestGameAssets") {
++        from(layout.projectDirectory.dir("src/main/assets/game")) {
++            include("versions.txt", "unlisted-versions.json", "version-alias.csv")
++        }
++        into(layout.buildDirectory.dir("unitTestAssets/assets/game"))
++    }
++    sourceSets.getByName("test") {
++        resources.srcDir(layout.buildDirectory.dir("unitTestAssets"))
++    }
++    tasks.matching { it.name == "processDebugUnitTestJavaRes" || it.name == "processReleaseUnitTestJavaRes" }
++        .configureEach { dependsOn(unitTestGameAssets) }
 +
 +    // 本 fork 只出一个包（包名 com.harmony.fcl，桌面名 Harmony FCL）。包名与官方版不同，
 +    // 可以与官方版 FCL 共存安装。
@@ -198,7 +239,7 @@ index c5e2c09..f22e184 100644
          }
          configureEach {
              resValue("string", "app_version", defaultConfig.versionName.toString())
-@@ -134,20 +211,15 @@ android {
+@@ -134,20 +233,15 @@
          }
      }
  
@@ -223,7 +264,7 @@ index c5e2c09..f22e184 100644
              }
          }
      }
-@@ -164,13 +236,14 @@ abstract class FilterJreAssets : Sync() {
+@@ -164,13 +258,14 @@
  
  val filterJreAssets = tasks.register<FilterJreAssets>("filterJreAssets") {
      val arch = System.getProperty("arch", "all")
@@ -240,7 +281,7 @@ index c5e2c09..f22e184 100644
      }
  }
  
-@@ -180,7 +253,7 @@ androidComponents {
+@@ -180,7 +275,7 @@
              if (output is com.android.build.api.variant.impl.VariantOutputImpl) {
                  (output.getFilter(ABI)?.identifier ?: "all").let { abi ->
                      output.outputFileName =
@@ -249,7 +290,7 @@ index c5e2c09..f22e184 100644
                  }
              }
          }
-@@ -205,14 +278,8 @@ androidComponents {
+@@ -205,14 +300,8 @@
              mergeAssets.configure { inputs.property("lwjglArch", arch) }
              mergeAssets.configure {
                  doLast {
@@ -266,7 +307,7 @@ index c5e2c09..f22e184 100644
                      val assetsDir = outputDir.get().asFile
                      // 版本列表从 libs 下的 lwjgl-*-natives-release.aar 文件名推导，避免新增版本时忘记同步
                      val lwjglVersions = project.file("libs").listFiles { f ->
-@@ -224,7 +291,7 @@ androidComponents {
+@@ -224,7 +313,7 @@
                          val nativesDir = File(assetsDir, "app_runtime/lwjgl/$version/natives")
                          if (nativesDir.isDirectory) {
                              nativesDir.listFiles()?.forEach { dir ->
@@ -275,7 +316,7 @@ index c5e2c09..f22e184 100644
                                      logger.lifecycle("删除非目标架构 natives: $dir")
                                      dir.deleteRecursively()
                                  }
-@@ -236,7 +303,7 @@ androidComponents {
+@@ -236,7 +325,7 @@
                          val nativesDir = File(versionDir, "natives")
                          if (nativesDir.isDirectory) {
                              nativesDir.listFiles()?.forEach { dir ->
@@ -285,10 +326,9 @@ index c5e2c09..f22e184 100644
                                      dir.deleteRecursively()
                                  }
 diff --git a/FCL/src/main/java/com/mio/data/Renderer.kt b/FCL/src/main/java/com/mio/data/Renderer.kt
-index 3663599..77eb991 100644
 --- a/FCL/src/main/java/com/mio/data/Renderer.kt
 +++ b/FCL/src/main/java/com/mio/data/Renderer.kt
-@@ -25,6 +25,9 @@ data class Renderer(
+@@ -25,6 +25,9 @@
          const val ID_ZINK = "18d93f17-ff53-a319-fa61-58709a77bf87"
          const val ID_FREEDRENO = "8d427e6c-9d22-2d19-db0c-3b9ac2c1543f"
          const val ID_NGGL4ES = "e7b90ed6-e518-4d4e-93dc-5c7133cd5b31"
@@ -299,10 +339,9 @@ index 3663599..77eb991 100644
  
      fun getGLPath(): String {
 diff --git a/FCL/src/main/java/com/mio/manager/RendererManager.kt b/FCL/src/main/java/com/mio/manager/RendererManager.kt
-index c300273..0b27c3c 100644
 --- a/FCL/src/main/java/com/mio/manager/RendererManager.kt
 +++ b/FCL/src/main/java/com/mio/manager/RendererManager.kt
-@@ -14,6 +14,7 @@ object RendererManager {
+@@ -14,6 +14,7 @@
      lateinit var RENDERER_ZINK: Renderer
      lateinit var RENDERER_FREEDRENO: Renderer
      lateinit var RENDERER_NGGL4ES: Renderer
@@ -310,7 +349,7 @@ index c300273..0b27c3c 100644
      private var isInit = false
  
      @JvmStatic
-@@ -111,12 +112,26 @@ object RendererManager {
+@@ -111,12 +112,26 @@
              displayMaxMCver = "26.2"
          )
  
@@ -338,10 +377,9 @@ index c300273..0b27c3c 100644
          rendererList.add(RENDERER_GL4ES)
          rendererList.add(RENDERER_VIRGL)
 diff --git a/FCL/src/main/java/com/tungsten/fcl/setting/Controllers.java b/FCL/src/main/java/com/tungsten/fcl/setting/Controllers.java
-index d53a931..3aeaea6 100644
 --- a/FCL/src/main/java/com/tungsten/fcl/setting/Controllers.java
 +++ b/FCL/src/main/java/com/tungsten/fcl/setting/Controllers.java
-@@ -18,6 +18,7 @@ import com.tungsten.fclcore.util.io.IOUtils;
+@@ -18,6 +18,7 @@
  
  import java.io.File;
  import java.io.IOException;
@@ -349,7 +387,7 @@ index d53a931..3aeaea6 100644
  import java.util.ArrayList;
  import java.util.List;
  import java.util.concurrent.CopyOnWriteArrayList;
-@@ -41,6 +42,9 @@ public class Controllers {
+@@ -41,6 +42,9 @@
  
      private static final List<Runnable> CALLBACKS = new CopyOnWriteArrayList<>();
  
@@ -359,7 +397,7 @@ index d53a931..3aeaea6 100644
      public static void checkControllers() {
          synchronized (LOCK) {
              if (controllers.contains(null)) {
-@@ -48,13 +52,18 @@ public class Controllers {
+@@ -48,13 +52,18 @@
              }
              if (controllers.isEmpty()) {
                  try {
@@ -384,10 +422,9 @@ index d53a931..3aeaea6 100644
                  }
                  controllers.addAll(getControllersFromDisk());
 diff --git a/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt b/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt
-index f6813ee..e56da91 100644
 --- a/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt
 +++ b/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt
-@@ -43,6 +43,18 @@ import java.lang.reflect.Type
+@@ -43,6 +43,18 @@
  @JsonAdapter(VersionSetting.Serializer::class)
  class VersionSetting : Cloneable {
  
@@ -406,7 +443,7 @@ index f6813ee..e56da91 100644
      /**
       * FCL Version Settings have been divided into 2 parts.
       * 1. Global settings.
-@@ -94,8 +106,11 @@ class VersionSetting : Cloneable {
+@@ -94,8 +106,11 @@
      // options
      /**
       * The user customized arguments passed to JVM.
@@ -419,7 +456,7 @@ index f6813ee..e56da91 100644
          set(value) {
              if (field == value) return
              field = value
-@@ -177,7 +192,7 @@ class VersionSetting : Cloneable {
+@@ -177,7 +192,7 @@
              changed()
          }
  
@@ -428,7 +465,7 @@ index f6813ee..e56da91 100644
          set(value) {
              if (field == value) return
              field = value
-@@ -311,7 +326,7 @@ class VersionSetting : Cloneable {
+@@ -311,7 +326,7 @@
              if (maxMemoryN <= 0) maxMemoryN = MemoryUtils.findBestRAMAllocation(FCLApp.getAppContext())
              return VersionSetting().also { vs ->
                  vs.isUsesGlobal = json["usesGlobal"]?.asBoolean ?: true
@@ -437,20 +474,25 @@ index f6813ee..e56da91 100644
                  vs.minecraftArgs = json["minecraftArgs"]?.asString ?: ""
                  vs.maxMemory = maxMemoryN
                  vs.minMemory = json["minMemory"]?.asInt
-@@ -326,7 +341,7 @@ class VersionSetting : Cloneable {
+@@ -326,9 +341,12 @@
                  vs.isVKDriverSystem = json["vulkanDriverSystem"]?.asBoolean ?: false
                  vs.controller = json["controller"]?.asString ?: ("00000000")
                  vs.renderer =
 -                    json["renderer"]?.asString ?: Renderer.ID_NGGL4ES
 +                    json["renderer"]?.asString ?: Renderer.ID_MOBILEGLUES
                  vs.driver = json["driver"]?.asString ?: "Turnip"
-                 vs.isIsolateGameDir = json["isolateGameDir"]?.asBoolean ?: false
+-                vs.isIsolateGameDir = json["isolateGameDir"]?.asBoolean ?: false
++                // 默认开启版本隔离。旧值是 false，导致从没写过这个键的老实例游戏目录落在
++                // .minecraft/ 而不是 .minecraft/versions/<id>/——表现为存档"消失"。
++                // 只影响"从未写过该键"的实例；已显式为 false 的保持原样，不做强制迁移。
++                vs.isIsolateGameDir = json["isolateGameDir"]?.asBoolean ?: true
                  vs.isNotCheckMod = json["notCheckMod"]?.asBoolean ?: false
+                 vs.isDebugLog = json["debugLog"]?.asBoolean ?: false
+                 vs.isForceResolution = json["forceResolution"]?.asBoolean ?: false
 diff --git a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
-index eab67d1..dbcc1f1 100644
 --- a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
 +++ b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
-@@ -21,6 +21,7 @@ import com.oracle.dalvik.VMLauncher;
+@@ -21,6 +21,7 @@
  import com.tungsten.fclauncher.bridge.FCLBridge;
  import com.tungsten.fclauncher.utils.Architecture;
  import com.tungsten.fclauncher.utils.FCLPath;
@@ -458,7 +500,7 @@ index eab67d1..dbcc1f1 100644
  import com.tungsten.fclcore.util.Logging;
  
  import java.io.BufferedReader;
-@@ -359,6 +360,19 @@ public class FCLauncher {
+@@ -358,6 +359,19 @@
              // TODO: set NGG_DIR_PATH to custom path
              envMap.put("POJAV_RENDERER", "opengles3");
              envMap.put("POJAVEXEC_EGL", "libEGL.so");
@@ -480,7 +522,6 @@ index eab67d1..dbcc1f1 100644
              envMap.put("MESA_GL_VERSION_OVERRIDE", renderer.isEqual(Renderer.ID_VIRGL) ? "4.3" : "4.6");
 diff --git a/FCL/src/main/java/com/tungsten/fclauncher/utils/MobileGluesConfig.java b/FCL/src/main/java/com/tungsten/fclauncher/utils/MobileGluesConfig.java
 new file mode 100644
-index 0000000..9f59ba5
 --- /dev/null
 +++ b/FCL/src/main/java/com/tungsten/fclauncher/utils/MobileGluesConfig.java
 @@ -0,0 +1,81 @@
@@ -566,10 +607,9 @@ index 0000000..9f59ba5
 +    }
 +}
 diff --git a/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java b/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java
-index dce11e9..81ae15b 100644
 --- a/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java
 +++ b/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java
-@@ -100,7 +100,9 @@ public class DefaultLauncher {
+@@ -100,7 +100,9 @@
  
          getCacioJavaArgs(res, version, options);
  
@@ -581,7 +621,6 @@ index dce11e9..81ae15b 100644
          if (options.getMaxMemory() != null && options.getMaxMemory() > 0)
              res.addDefault("-Xmx", options.getMaxMemory() + "m");
 diff --git a/FCL/src/main/res/values-vi/strings.xml b/FCL/src/main/res/values-vi/strings.xml
-index 93a9cfa..a0b8d30 100644
 --- a/FCL/src/main/res/values-vi/strings.xml
 +++ b/FCL/src/main/res/values-vi/strings.xml
 @@ -1,6 +1,6 @@
@@ -593,7 +632,6 @@ index 93a9cfa..a0b8d30 100644
      <string name="splash_agreement">FCL yêu cầu quyền lưu trữ để quản lý và đọc các tệp trò chơi. FCL hoàn toàn mã nguồn mở trên GitHub, vì vậy bạn hãy yên tâm về an toàn dữ liệu của mình. Quyền này chỉ nhằm mục đích để trò chơi hoạt động bình thường và không gây ra rủi ro về bảo mật.</string>
      <string name="splash_permission_msg">Không có quyền lưu trữ, vui lòng cấp quyền cho Fold Craft Launcher.</string>
 diff --git a/FCL/src/main/res/values-zh/strings.xml b/FCL/src/main/res/values-zh/strings.xml
-index ee3ced0..8b2eb62 100644
 --- a/FCL/src/main/res/values-zh/strings.xml
 +++ b/FCL/src/main/res/values-zh/strings.xml
 @@ -2,14 +2,14 @@
@@ -613,7 +651,7 @@ index ee3ced0..8b2eb62 100644
      <string name="splash_eula_error">无法获取用户协议，请检查网络。</string>
      <string name="splash_eula_next">同意并继续</string>
      <string name="splash_runtime_title">安装或更新运行环境</string>
-@@ -1337,7 +1337,7 @@
+@@ -1343,7 +1343,7 @@
      <string name="file_browser_share_title">分享文件</string>
      <string name="file_browser_share_message">你确定要分享此文件吗？</string>
      <string name="crash_reporter_title">崩溃报告</string>
@@ -623,7 +661,6 @@ index ee3ced0..8b2eb62 100644
      <string name="crash_reporter_close">退出软件</string>
      <string name="crash_reporter_copy">复制日志</string>
 diff --git a/FCL/src/main/res/values/strings.xml b/FCL/src/main/res/values/strings.xml
-index a4a522b..9996465 100644
 --- a/FCL/src/main/res/values/strings.xml
 +++ b/FCL/src/main/res/values/strings.xml
 @@ -1,9 +1,9 @@
@@ -647,7 +684,7 @@ index a4a522b..9996465 100644
      <string name="splash_eula_error">Cannot get EULA, please check the network.</string>
      <string name="splash_eula_next">Agree and Continue</string>
      <string name="splash_runtime_title">Install or update app runtime</string>
-@@ -1032,6 +1032,8 @@
+@@ -1035,6 +1035,8 @@
      <string name="settings_fcl_renderer_zink" translatable="false">Kopper Zink (OpenGL 4.6)</string>
      <string name="settings_fcl_renderer_freedreno">Freedreno (OpenGL 4.6, only support adreno616-a660)</string>
      <string name="settings_fcl_renderer_nggl4es">Krypton Wrapper (OpenGL 3.1+)</string>
@@ -656,7 +693,7 @@ index a4a522b..9996465 100644
  
      <string name="settings_fcl_driver">Vulkan Driver</string>
      <string name="settings_fcl_driver_desc">Choose the Vulkan driver implementation.</string>
-@@ -1458,7 +1460,7 @@
+@@ -1464,7 +1466,7 @@
      <string name="jar_executor_warn">Note! This feature is not for installing mods. If you are installing mods, please use the launcher\'s download function or add them in "Manage Mods".</string>
  
      <!-- 原 FCLLibrary 模块字符串（模块已并入 FCL） -->
@@ -665,7 +702,7 @@ index a4a522b..9996465 100644
      <string name="file_browser_title">File Browser</string>
      <string name="file_browser_back">Back</string>
      <string name="file_browser_close">Exit</string>
-@@ -1479,7 +1481,7 @@
+@@ -1485,7 +1487,7 @@
      <string name="file_browser_share_title">Share the file</string>
      <string name="file_browser_share_message">Are you sure to share this file?</string>
      <string name="crash_reporter_title">Crash Report</string>
@@ -675,7 +712,6 @@ index a4a522b..9996465 100644
      <string name="crash_reporter_close">Exit</string>
      <string name="crash_reporter_copy">Copy</string>
 diff --git a/gradle.properties b/gradle.properties
-index ac74161..5941ea8 100644
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -6,7 +6,10 @@
@@ -691,7 +727,6 @@ index ac74161..5941ea8 100644
  # This option should only be used with decoupled projects. More details, visit
  # http://www.gradle.org/docs/current/userguide/multi_project_builds.html#sec:decoupled_projects
 diff --git a/gradle/wrapper/gradle-wrapper.properties b/gradle/wrapper/gradle-wrapper.properties
-index 1abd527..c71598d 100644
 --- a/gradle/wrapper/gradle-wrapper.properties
 +++ b/gradle/wrapper/gradle-wrapper.properties
 @@ -1,7 +1,10 @@
@@ -707,7 +742,6 @@ index 1abd527..c71598d 100644
  validateDistributionUrl=true
  zipStoreBase=GRADLE_USER_HOME
 diff --git a/settings.gradle.kts b/settings.gradle.kts
-index 7d24f0c..b2c38be 100644
 --- a/settings.gradle.kts
 +++ b/settings.gradle.kts
 @@ -1,5 +1,8 @@
@@ -719,7 +753,7 @@ index 7d24f0c..b2c38be 100644
          gradlePluginPortal()
          google()
          mavenCentral()
-@@ -11,6 +14,13 @@ plugins {
+@@ -11,6 +14,13 @@
  dependencyResolutionManagement {
      repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
      repositories {
@@ -733,3 +767,521 @@ index 7d24f0c..b2c38be 100644
          google()
          mavenCentral()
          maven("https://jitpack.io")
+diff --git a/FCL/src/main/java/com/tungsten/fcl/game/LauncherHelper.java b/FCL/src/main/java/com/tungsten/fcl/game/LauncherHelper.java
+--- a/FCL/src/main/java/com/tungsten/fcl/game/LauncherHelper.java
++++ b/FCL/src/main/java/com/tungsten/fcl/game/LauncherHelper.java
+@@ -34,6 +34,7 @@
+ 
+ import com.google.gson.GsonBuilder;
+ import com.mio.JavaManager;
++import com.mio.autofix.PreferOpenGLFetcher;
+ import com.mio.data.Renderer;
+ import com.mio.manager.RendererManager;
+ import com.mio.minecraft.ModCheckException;
+@@ -279,6 +280,13 @@
+                             GameOption gameOption = new GameOption(repository.getRunDirectory(selectedVersion).getAbsolutePath());
+                             gameOption.set("preferredGraphicsBackend", setting.getGraphicsBackend());
+                             gameOption.set("startedCleanly", "true");
++                            // MC 26.2 起游戏会自己挑渲染后端，麒麟 Maleoon 的 Vulkan 能力不足，
++                            // 选到就是崩溃（本项目"绝不调用 Vulkan"硬约束）。这里写的就是 PreferOpenGL
++                            // 模组用的那个键，所以对已装模组的实例是幂等的；对原版 / NeoForge /
++                            // 模组还没支持到的版本，这是唯一一条确定生效的路。低于 26.2 的版本不认识它，不写。
++                            if (PreferOpenGLFetcher.maySelectVulkan(repository.getGameVersion(selectedVersion).orElse(""))) {
++                                gameOption.set("graphicsApiPreference", "prefer_opengl");
++                            }
+                             gameOption.save();
+                             return Task.completed(fclBridge);
+                         }).thenAcceptAsync(fclBridge -> Schedulers.androidUIThread().execute(() -> {
+diff --git a/FCL/src/main/java/com/tungsten/fcl/activity/SplashActivity.kt b/FCL/src/main/java/com/tungsten/fcl/activity/SplashActivity.kt
+--- a/FCL/src/main/java/com/tungsten/fcl/activity/SplashActivity.kt
++++ b/FCL/src/main/java/com/tungsten/fcl/activity/SplashActivity.kt
+@@ -18,6 +18,7 @@
+ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+ import androidx.lifecycle.lifecycleScope
+ import com.mio.JavaManager
++import com.mio.autofix.InstanceAutoFix
+ import com.mio.manager.RendererManager
+ import com.mio.util.ImageUtil
+ import com.mio.util.getFileName
+@@ -148,6 +149,13 @@
+                     }
+                 }
+             }
++            // 实例自检：默认启用版本隔离、老 JDK 上的 -XX:UseSVE=0、MC 26.2+ 的 OpenGL 后端。
++            // 独立协程、不 await——这一步要碰网络和磁盘，绝不能挡启动。
++            lifecycleScope.launch(Dispatchers.IO) {
++                runCatching { InstanceAutoFix.applyAll() }.exceptionOrNull()?.let {
++                    Logging.LOG.log(Level.WARNING, "InstanceAutoFix failed", it)
++                }
++            }
+             startActivity(
+                 handleModpack(Intent(this@SplashActivity, MainActivity::class.java)),
+                 ActivityOptionsCompat.makeCustomAnimation(this@SplashActivity, 0, 0).toBundle()
+diff --git a/FCL/src/main/java/com/mio/autofix/InstanceAutoFix.kt b/FCL/src/main/java/com/mio/autofix/InstanceAutoFix.kt
+new file mode 100644
+--- /dev/null
++++ b/FCL/src/main/java/com/mio/autofix/InstanceAutoFix.kt
+@@ -0,0 +1,270 @@
++package com.mio.autofix
++
++import com.mio.JavaManager
++import com.mio.data.Renderer
++import com.tungsten.fcl.game.FCLGameRepository
++import com.tungsten.fcl.setting.Profile
++import com.tungsten.fcl.setting.Profiles
++import com.tungsten.fcl.setting.VersionSetting
++import com.tungsten.fclcore.download.LibraryAnalyzer
++import com.tungsten.fclcore.game.Version
++import com.tungsten.fclcore.util.Logging
++import com.tungsten.fclcore.util.versioning.GameVersionNumber
++import java.io.File
++import java.nio.file.Files
++import java.nio.file.Path
++import java.nio.file.StandardCopyOption
++import java.util.logging.Level
++
++/**
++ * 启动器每次打开时，对所有游戏实例做一次幂等自检与修正。
++ *
++ * 修正五件事：
++ *
++ * 1. **启用游戏特定设置（`isUsesGlobal = false`）。** 这是前置条件——第 2~4 步写的都是
++ *    版本自己的设置，而 `getVersionSetting()` 在 `isUsesGlobal` 为真时会返回全局对象，
++ *    写进去等于没写。
++ *
++ * 2. **版本隔离常开。** 本 app 的既定行为就是游戏目录落在 `versions/<id>/`，
++ *    所以这里是**强制打开**而非"设默认值"——用户改过也会在下次启动时被改回来。
++ *
++ * 3. **渲染器按 MC 版本二选一。** 见 [rendererFor]：低于 1.17 钉死 Krypton Wrapper，
++ *    1.17 及以上只纠正"被留成 Krypton Wrapper"的情况，用户手选的其它渲染器保留。
++ *
++ * 4. **`-XX:UseSVE=0` 与老 JDK 不兼容。** 这个参数是 aarch64 专有的，JDK 17 才引入；
++ *    Java 8 见到它会以 `Unrecognized VM option 'UseSVE'` 直接退出。而
++ *    [VersionSetting.DEFAULT_JAVA_ARGS] 是无条件带上的，所以老版本实例开箱必崩。
++ *    判定依据是**实际会被用到的那个 Java**，与 `LauncherHelper` 启动时的选择逻辑保持一致。
++ *
++ * 5. **MC 26.2 起游戏可能自己挑到 Vulkan 渲染后端。** 麒麟 Maleoon 的 Vulkan 能力不足
++ *    （这正是本项目"绝不调用 Vulkan"硬约束的由来），选到就崩。对策分两条路：
++ *    - 有加载器（fabric/quilt/forge）且 PreferOpenGL 模组支持该版本 → 把模组放进 `mods/`
++ *    - 其余（原版、NeoForge、模组尚未支持的版本）→ 往该实例的 JVM 参数追加
++ *      `-Dminecraft.forceOpenGL=true`
++ *
++ * 整个过程只改**版本自己的设置**，全局 Java 虚拟机参数不动。
++ */
++object InstanceAutoFix {
++
++    private const val TAG = "InstanceAutoFix"
++
++    /** 只有 aarch64 的 JDK 17+ 认识它；更老的 JDK 会拒绝启动 */
++    private const val USE_SVE = "-XX:UseSVE=0"
++
++    /** 未知的 `-D` 属性 JVM 会静默忽略，所以这条最坏情况是"不生效"，不会导致启动失败 */
++    private const val FORCE_OPENGL = "-Dminecraft.forceOpenGL=true"
++
++    private const val MIN_JAVA_FOR_SVE = 17
++
++    /**
++     * MobileGlues 支持的最低 MC 版本，与 `RendererManager` 里那个渲染器的 `minMCver` 必须一致。
++     *
++     * 这个值不是"仅显示"：`LauncherHelper.checkRenderer()` 拿它和实际 MC 版本比，
++     * **超出范围就弹一个 `setCancelable(false)` 的对话框**——每次启动都弹一次，
++     * 点"取消"直接中止启动。所以低于 1.17 的实例绝不能留着 MobileGlues。
++     */
++    private const val MOBILEGLUES_MIN_MC = "1.17"
++
++    /**
++     * 入口。挂在 `SplashActivity.enterLauncher()` 里 `ConfigHolder.init()` 之后，
++     * 用独立的 IO 协程跑、**不 await**——这里会碰网络和磁盘，不能拖慢启动。
++     *
++     * 任何单个实例出错都只记日志并继续，绝不向外抛。
++     */
++    @JvmStatic
++    fun applyAll() {
++        Logging.LOG.log(Level.INFO, "[$TAG] 开始实例自检")
++        var changed = 0
++        var failed = 0
++
++        Profiles.profiles.forEach { profile ->
++            runCatching {
++                profile.repository.versions.forEach { version ->
++                    runCatching { applyToVersion(profile.repository, version.id) }
++                        .onSuccess { if (it) changed++ }
++                        .onFailure {
++                            failed++
++                            Logging.LOG.log(Level.FINE, "[$TAG] 跳过 ${version.id}", it)
++                        }
++                }
++            }.onFailure {
++                failed++
++                Logging.LOG.log(Level.WARNING, "[$TAG] 配置自检失败: ${profile.repository}", it)
++            }
++        }
++
++        Logging.LOG.log(
++            Level.INFO,
++            "[$TAG] 实例自检结束：修正 $changed 个实例，跳过 $failed 个"
++        )
++    }
++
++    /**
++     * 处理单个实例。返回是否发生了实际改动。
++     *
++     * @throws com.tungsten.fclcore.game.VersionNotFoundException 版本已被删掉
++     */
++    private fun applyToVersion(repository: FCLGameRepository, id: String): Boolean {
++        // 读实例 jar 里的 version.json——加载器实例也能借此拿到真实的 MC 版本，
++        // 而不是 fabric-loader 的版本号。jar 还没下载完时拿不到，跳过即可。
++        val gameVersion = repository.getGameVersion(id).orElse(null) ?: return false
++
++        val resolved = repository.getResolvedPreservingPatchesVersion(id)
++        val loader = detectLoader(LibraryAnalyzer.analyze(resolved, gameVersion))
++
++        // ⚠️ 必须用 getLocalVersionSetting / createLocalVersionSetting。
++        // getVersionSetting(id) 在 isUsesGlobal 为真时会**返回全局对象**，
++        // 往它上面写参数会污染所有版本。
++        val vs = repository.getLocalVersionSetting(id)
++            ?: repository.createLocalVersionSetting(id)
++            ?: return false
++
++        var changed = false
++
++        // 前置条件：启用游戏特定设置。否则即使我们写了版本自己的 javaArgs，
++        // 启动时 getVersionSetting() 依然会解析成全局对象，写进去的值等于没写。
++        if (vs.isUsesGlobal) {
++            vs.isUsesGlobal = false
++            changed = true
++            Logging.LOG.log(Level.INFO, "[$TAG] $id 启用游戏特定设置")
++        }
++
++        // 版本隔离：本 app 的既定行为就是常开（游戏目录落在 versions/<id>/），
++        // 所以这里是强制打开而不是"设默认值"——用户改过也会在下次启动时被改回来。
++        if (!vs.isIsolateGameDir) {
++            vs.isIsolateGameDir = true
++            changed = true
++            Logging.LOG.log(Level.INFO, "[$TAG] $id 开启版本隔离")
++        }
++
++        // 渲染器按 MC 版本二选一，见 rendererFor
++        val wantRenderer = rendererFor(gameVersion, vs.renderer)
++        if (vs.renderer != wantRenderer) {
++            vs.renderer = wantRenderer
++            changed = true
++            Logging.LOG.log(Level.INFO, "[$TAG] $id 渲染器设为 $wantRenderer（MC $gameVersion）")
++        }
++
++        // UseSVE：按实际会被用到的 Java 主版本判断
++        if (javaMajorOf(vs, resolved) < MIN_JAVA_FOR_SVE) {
++            if (removeToken(vs, USE_SVE)) {
++                changed = true
++                Logging.LOG.log(Level.INFO, "[$TAG] $id 移除 $USE_SVE（Java 不支持该参数）")
++            }
++        }
++
++        // 26.2 起的渲染后端：有加载器就上模组，否则退回 JVM 参数
++        if (PreferOpenGLFetcher.maySelectVulkan(gameVersion)) {
++            val jar = if (loader != null) PreferOpenGLFetcher.resolve(loader, gameVersion) else null
++            if (jar != null) {
++                if (installMod(repository.getModsDirectory(id), jar)) {
++                    changed = true
++                    Logging.LOG.log(Level.INFO, "[$TAG] $id 放入 ${jar.name}（$loader / $gameVersion）")
++                }
++                // 模组就位后，之前给同一个版本加的那条 JVM 参数就多余了。
++                // 清掉它，让实例的最终状态只取决于 (加载器, MC 版本)，
++                // 而不是"第一次联网扫描和第一次离线扫描谁先跑"。
++                if (removeToken(vs, FORCE_OPENGL)) {
++                    changed = true
++                    Logging.LOG.log(Level.INFO, "[$TAG] $id 已由模组接管，移除 $FORCE_OPENGL")
++                }
++            } else if (addToken(vs, FORCE_OPENGL)) {
++                changed = true
++                Logging.LOG.log(
++                    Level.INFO,
++                    "[$TAG] $id 追加 $FORCE_OPENGL（${loader ?: "原版"} / $gameVersion 无可用模组）"
++                )
++            }
++        }
++
++        return changed
++    }
++
++    /**
++     * MC 版本 + 当前取值 → 该实例应有的渲染器 ID。
++     *
++     * 两侧不对称，因为"用错"的代价不一样：
++     *
++     * - **低于 1.17 一律钉死 Krypton Wrapper。** MobileGlues 的 `minMCver` 是 1.17，留着它会让
++     *   `checkRenderer` 每次启动都弹一个 `setCancelable(false)` 的对话框，点"取消"直接中止启动。
++     * - **1.17 及以上只纠正"被留成 Krypton Wrapper"这一种情况。** 全局默认本来就是 MobileGlues，
++     *   正常实例无需干预；用户刻意选的 Zink / Virgl / GL4ES 一律**原样返回**，
++     *   不能每次启动都给人改回去。
++     *
++     * 边界值取自 MobileGlues 的 `minMCver`，与 `LauncherHelper.checkRenderer` 的
++     * `compare(version, minMCver) < 0` 逐字对齐（相等时不算越界）。
++     * Krypton Wrapper 的 `minMCver` 是空串、MobileGlues 的 `maxMCver` 是空串，
++     * 所以这两支无缝覆盖全部版本，老到 1.0 也不会缺渲染器。
++     *
++     * 抽成纯函数是为了能单测：判错的后果对用户是"每次启动被弹窗拦一次"。
++     *
++     * @throws IllegalArgumentException MC 版本号解析不了时（`GameVersionNumber.compare` 抛），
++     *         调用方会跳过该实例——宁可不动，也好过按错误的版本给渲染器。
++     */
++    @JvmStatic
++    fun rendererFor(gameVersion: String, current: String): String =
++        if (GameVersionNumber.compare(gameVersion, MOBILEGLUES_MIN_MC) >= 0) {
++            if (current == Renderer.ID_NGGL4ES) Renderer.ID_MOBILEGLUES else current
++        } else {
++            Renderer.ID_NGGL4ES
++        }
++
++    /**
++     * 从 `LibraryAnalyzer` 的结果里认出加载器。
++     *
++     * 只返回 PreferOpenGL 支持的三种；NeoForge 与其它加载器返回 null，走 JVM 参数那条路。
++     * Quilt 先于 Fabric 判断——Quilt 的安装文件里也可能带 fabric 相关条目。
++     */
++    private fun detectLoader(analyzer: LibraryAnalyzer): String? {
++        fun has(type: LibraryAnalyzer.LibraryType) = analyzer.getLibrary(type).isPresent
++        return when {
++            // Quilt 先判：这里一并排除了 LEGACY_FABRIC（更老的版本，不在 PreferOpenGL 支持范围内）
++            has(LibraryAnalyzer.LibraryType.QUILT) -> "quilt"
++            has(LibraryAnalyzer.LibraryType.FABRIC) -> "fabric"
++            has(LibraryAnalyzer.LibraryType.FORGE) -> "forge"
++            else -> null
++        }
++    }
++
++    /**
++     * 实际会被用到的 Java 主版本。
++     *
++     * 与 `LauncherHelper` 的选择逻辑对齐：实例显式指定了 Java（[VersionSetting.java] 不为 `"Auto"`）
++     * 就用它；否则用 `JavaManager` 推荐的那个。
++     */
++    private fun javaMajorOf(vs: VersionSetting, version: Version?): Int {
++        val explicit = vs.java
++        if (explicit != "Auto") {
++            JavaManager.javaList.find { it.name == explicit }?.let { return it.getVersion() }
++        }
++        return JavaManager.getSuitableJavaVersion(version).getVersion()
++    }
++
++    /** 按 token 移除，保留用户其它参数与原有顺序；本就不在则返回 false（幂等）。 */
++    private fun removeToken(vs: VersionSetting, token: String): Boolean {
++        val tokens = vs.javaArgs.split(' ').filter { it.isNotEmpty() }
++        if (token !in tokens) return false
++        vs.javaArgs = tokens.filter { it != token }.joinToString(" ")
++        return true
++    }
++
++    /** 追加 token，已存在则不重复添加（幂等）。 */
++    private fun addToken(vs: VersionSetting, token: String): Boolean {
++        val tokens = vs.javaArgs.split(' ').filter { it.isNotEmpty() }
++        if (token in tokens) return false
++        vs.javaArgs = (tokens + token).joinToString(" ")
++        return true
++    }
++
++    /**
++     * 把缓存里的模组拷进实例的 `mods/`。
++     * 同名同大小视为已就位——避免每次启动都重写一遍文件。
++     */
++    private fun installMod(modsDir: Path, jar: File): Boolean {
++        Files.createDirectories(modsDir)
++        val target = modsDir.resolve(jar.name)
++        if (Files.isRegularFile(target) && Files.size(target) == jar.length()) return false
++        Files.copy(jar.toPath(), target, StandardCopyOption.REPLACE_EXISTING)
++        return true
++    }
++}
+diff --git a/FCL/src/main/java/com/mio/autofix/PreferOpenGLFetcher.kt b/FCL/src/main/java/com/mio/autofix/PreferOpenGLFetcher.kt
+new file mode 100644
+--- /dev/null
++++ b/FCL/src/main/java/com/mio/autofix/PreferOpenGLFetcher.kt
+@@ -0,0 +1,188 @@
++package com.mio.autofix
++
++import com.tungsten.fclauncher.utils.FCLPath
++import com.tungsten.fclcore.mod.ModLoaderType
++import com.tungsten.fclcore.mod.RemoteMod
++import com.tungsten.fclcore.mod.modrinth.ModrinthRemoteModRepository
++import com.tungsten.fclcore.util.Logging
++import com.tungsten.fclcore.util.io.NetworkUtils
++import com.tungsten.fclcore.util.versioning.GameVersionNumber
++import java.io.File
++import java.util.logging.Level
++
++/**
++ * PreferOpenGL 模组的解析、下载与缓存。
++ *
++ * 这个模组做的事是改写 options.txt 里的 `graphicsApiPreference:prefer_opengl`，
++ * 把 MC 26.2+ 的渲染后端钉死在 OpenGL——麒麟 Maleoon 的 Vulkan 能力不足，
++ * 游戏自动选到 Vulkan 会直接崩溃。
++ *
++ * **为什么不打包进 APK**：该模组的许可证是 `LicenseRef-All-Rights-Reserved`（保留所有权利），
++ * 而本仓库已开源到公开仓库，把它随 APK 一起分发属于再分发受版权保护的作品。
++ * 所以改成首次运行时联网下载到应用私有目录缓存，之后离线复用。
++ *
++ * 解析顺序：先查 Modrinth API（能自动吃到作者后续新增的 MC 版本支持），
++ * API 不可达时回落到 [FALLBACK_URLS] 里写死的文件，保证有一条确定的路。
++ */
++object PreferOpenGLFetcher {
++
++    private const val TAG = "PreferOpenGL"
++
++    private const val PROJECT_ID = "rmumVsNS"
++
++    /**
++     * 模组支持的加载器。NeoForge 不在其中（模组说明里标注仍在开发中），
++     * 因此 NeoForge 实例走 JVM 参数那条路。
++     */
++    private val SUPPORTED_LOADERS = setOf("fabric", "quilt", "forge")
++
++    /** 模组支持的首个 MC 版本；低于它不需要处理 */
++    const val MIN_SUPPORTED_MC = "26.2"
++
++    /** [MIN_SUPPORTED_MC] 对应的首个快照，供 [GameVersionNumber.isAtLeast] 快速比较用 */
++    private const val MIN_SUPPORTED_SNAPSHOT = "26w14a"
++
++    /**
++     * API 不可达时的兜底版本上界。
++     * 正常情况下这个范围由 API 返回的 `gameVersions` 决定，这里只是离线兜底。
++     */
++    const val FALLBACK_MAX_MC = "26.3"
++
++    /**
++     * 写死的回落地址（2026-09-30 取自 Modrinth API）。
++     * fabric 与 quilt 共用同一个 jar，forge 是独立构建。
++     */
++    private val FALLBACK_URLS = mapOf(
++        "fabric" to "https://cdn.modrinth.com/data/rmumVsNS/versions/sMcPi6uS/preferopengl-1.0.0.jar",
++        "quilt" to "https://cdn.modrinth.com/data/rmumVsNS/versions/sMcPi6uS/preferopengl-1.0.0.jar",
++        "forge" to "https://cdn.modrinth.com/data/rmumVsNS/versions/3x35PJ6n/preferopengl-forge-1.0.0.jar",
++    )
++
++    private fun cacheDir(): File = File(FCLPath.FILES_DIR, "preferopengl")
++
++    fun isSupportedLoader(loader: String): Boolean = loader in SUPPORTED_LOADERS
++
++    /**
++     * 这个 MC 版本是否属于"游戏会自己挑渲染后端、可能挑到 Vulkan"的范围。
++     *
++     * 26.2 起 MC 才引入图形后端选择；麒麟 Maleoon 的 Vulkan 能力不足，
++     * 一旦游戏选到 Vulkan 就是直接崩溃，所以在启动前必须把后端钉死。
++     * 版本比较走 [GameVersionNumber]，解析不了（自造版本号之类）时回落到粗糙的正则。
++     */
++    @JvmStatic
++    fun maySelectVulkan(mcVersion: String): Boolean = runCatching {
++        GameVersionNumber.asGameVersion(mcVersion)
++            .isAtLeast(MIN_SUPPORTED_MC, MIN_SUPPORTED_SNAPSHOT)
++    }.getOrElse {
++        mcVersionForCompare(mcVersion)?.let { it >= MC_26_2 } ?: false
++    }
++
++    /**
++     * 取得适用于 [loader] + [mcVersion] 的模组 jar；不支持时返回 null。
++     *
++     * 返回的文件已确保落在本地缓存目录里，可直接拷进实例的 mods 目录。
++     * 任何网络失败都只记日志并返回 null，绝不抛出——调用方在启动路径上。
++     */
++    @JvmStatic
++    fun resolve(loader: String, mcVersion: String): File? {
++        if (!isSupportedLoader(loader)) return null
++
++        // 1) 先问 API：能同时确认"这个 MC 版本"和"这个加载器"真的被支持
++        val apiAnswer = runCatching { resolveFromApi(loader, mcVersion) }
++        if (apiAnswer.isSuccess) {
++            // API 答了。此时 null 的意思是"确实不支持这个组合"——**不能再回落**。
++            // 把模组塞进它不支持的版本会让游戏崩，那比退回 JVM 参数更糟。
++            // （API 返回空列表也走这里，方向偏保守，不会崩。）
++            return apiAnswer.getOrNull()
++        }
++
++        // 2) 只有"API 连不上"才用写死地址兜底，保证离线/接口挂掉时仍有一条确定的路
++        Logging.LOG.log(Level.WARNING, "[$TAG] Modrinth API 不可达，改用离线兜底", apiAnswer.exceptionOrNull())
++        if (!withinFallbackRange(mcVersion)) {
++            Logging.LOG.log(Level.INFO, "[$TAG] $mcVersion 不在模组支持范围（兜底判断），改走 JVM 参数")
++            return null
++        }
++        val url = FALLBACK_URLS[loader] ?: return null
++        val target = File(cacheDir(), url.substringAfterLast('/'))
++        if (target.isFile && target.length() > 0) return target
++        return if (download(url, target)) target else null
++    }
++
++    /**
++     * 查 Modrinth，挑出同时匹配加载器与游戏版本的那个文件。
++     * 没有匹配（例如 NeoForge、或超出模组支持范围）时返回 null。
++     */
++    private fun resolveFromApi(loader: String, mcVersion: String): File? {
++        val wantLoader = when (loader) {
++            "fabric" -> ModLoaderType.FABRIC
++            "quilt" -> ModLoaderType.QUILT
++            "forge" -> ModLoaderType.FORGE
++            else -> return null
++        }
++
++        val stream = ModrinthRemoteModRepository.MODS.getRemoteVersionsById(PROJECT_ID)
++        val matched: RemoteMod.Version? = try {
++            stream.filter { v ->
++                mcVersion in v.gameVersions() && wantLoader in v.loaders()
++            }.findFirst().orElse(null)
++        } finally {
++            stream.close()
++        }
++
++        if (matched == null) {
++            Logging.LOG.log(Level.INFO, "[$TAG] 模组不支持 $loader / $mcVersion，改走 JVM 参数")
++            return null
++        }
++
++        val remote = matched.file()
++        // 缓存文件名用远端文件名，作者发新版时自然换名、不会命中旧缓存
++        val target = File(cacheDir(), remote.filename())
++        if (target.isFile && target.length() > 0) return target
++        return if (download(remote.url(), target)) target else null
++    }
++
++    /**
++     * API 不可达时的兜底范围判断。只做粗判，宁可多试一次下载也不要漏掉该处理的版本。
++     */
++    private fun withinFallbackRange(mcVersion: String): Boolean = runCatching {
++        val v = mcVersionForCompare(mcVersion) ?: return@runCatching false
++        v >= MC_26_2 && v <= MC_26_3
++    }.getOrDefault(false)
++
++    private val MC_26_2 = 2602
++    private val MC_26_3 = 2603
++
++    /**
++     * 把 "26.2" / "26.3-snapshot-3" / "26w14a" 这类版本号压成一个可比较的整数。
++     * 只用于兜底判断，不需要精确到快照序号。
++     */
++    private fun mcVersionForCompare(raw: String): Int? {
++        val m = Regex("^26(?:w(\\d+)|[.-](\\d+))").find(raw) ?: return null
++        return if (m.groupValues[1].isNotEmpty()) {
++            // 26w14a 之类：开发版一律视为 26.2 之后
++            2602
++        } else {
++            2600 + (m.groupValues[2].toIntOrNull() ?: return null)
++        }
++    }
++
++    /** 下载到 [target]，失败时清掉半截文件。 */
++    private fun download(url: String, target: File): Boolean {
++        return runCatching {
++            target.parentFile?.let { if (!it.isDirectory && !it.mkdirs()) return false }
++            val conn = NetworkUtils.resolveConnection(
++                NetworkUtils.createHttpConnection(NetworkUtils.toURL(url))
++            )
++            conn.inputStream.use { input ->
++                target.outputStream().use { output -> input.copyTo(output) }
++            }
++            target.length() > 0
++        }.getOrElse {
++            target.delete()
++            Logging.LOG.log(Level.WARNING, "[$TAG] 下载失败: $url", it)
++            false
++        }.also {
++            if (it) Logging.LOG.log(Level.INFO, "[$TAG] 已缓存模组: ${target.name}")
++        }
++    }
++}

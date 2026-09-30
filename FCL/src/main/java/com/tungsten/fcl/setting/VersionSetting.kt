@@ -343,7 +343,10 @@ class VersionSetting : Cloneable {
                 vs.renderer =
                     json["renderer"]?.asString ?: Renderer.ID_MOBILEGLUES
                 vs.driver = json["driver"]?.asString ?: "Turnip"
-                vs.isIsolateGameDir = json["isolateGameDir"]?.asBoolean ?: false
+                // 默认开启版本隔离。旧值是 false，导致从没写过这个键的老实例游戏目录落在
+                // .minecraft/ 而不是 .minecraft/versions/<id>/——表现为存档"消失"。
+                // 只影响"从未写过该键"的实例；已显式为 false 的保持原样，不做强制迁移。
+                vs.isIsolateGameDir = json["isolateGameDir"]?.asBoolean ?: true
                 vs.isNotCheckMod = json["notCheckMod"]?.asBoolean ?: false
                 vs.isDebugLog = json["debugLog"]?.asBoolean ?: false
                 vs.isForceResolution = json["forceResolution"]?.asBoolean ?: false

@@ -134,10 +134,12 @@ android {
         applicationId = "com.harmony.fcl"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 内置 MobileGlues 的 fork 版本：versionCode 与上游 1.3.3.5(1335) 区分开，
-        // versionName 保持不动（FCL 自身有基于 versionName 的解析）
-        versionCode = 1336
-        versionName = "1.3.3.5"
+        // 内置 MobileGlues 的 fork 版本。两条约定：
+        //   versionName 与上游同步（FCL 自身有基于 versionName 的解析，不能自作主张）
+        //   versionCode 取上游 +1，与官方包区分开——本 fork 包名是 com.harmony.fcl，
+        //   本就可与官方版共存，versionCode 只用于自己这边的升级判定
+        versionCode = 1337
+        versionName = "1.3.3.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
@@ -147,6 +149,26 @@ android {
     }
 
     testBuildType = "debug"
+
+    // 单元测试也要能读到 /assets/game/versions.txt。GameVersionNumber 的静态初始化会用它
+    // （Android 上靠 APK 的 zip 条目解析，JVM 单测的 classpath 里没有）。
+    // 不挂的话，任何碰 GameVersionNumber 的测试都会拿到 ExceptionInInitializerError，
+    // 然后被各处的 runCatching 吞掉、悄悄跑到回落分支——看着是绿的，其实什么都没验到。
+    //
+    // 不能直接 srcDir("src/main/assets")：那样资源根变成 assets/ 本身，只会得到
+    // /game/versions.txt，和代码要的 /assets/game/versions.txt 对不上。
+    // 所以先生成一份只含 assets/game/ 的资源根。
+    val unitTestGameAssets = tasks.register<Sync>("unitTestGameAssets") {
+        from(layout.projectDirectory.dir("src/main/assets/game")) {
+            include("versions.txt", "unlisted-versions.json", "version-alias.csv")
+        }
+        into(layout.buildDirectory.dir("unitTestAssets/assets/game"))
+    }
+    sourceSets.getByName("test") {
+        resources.srcDir(layout.buildDirectory.dir("unitTestAssets"))
+    }
+    tasks.matching { it.name == "processDebugUnitTestJavaRes" || it.name == "processReleaseUnitTestJavaRes" }
+        .configureEach { dependsOn(unitTestGameAssets) }
 
     // 本 fork 只出一个包（包名 com.harmony.fcl，桌面名 Harmony FCL）。包名与官方版不同，
     // 可以与官方版 FCL 共存安装。

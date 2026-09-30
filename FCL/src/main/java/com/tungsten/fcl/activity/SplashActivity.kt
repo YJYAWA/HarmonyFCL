@@ -18,6 +18,7 @@ import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import com.mio.JavaManager
+import com.mio.autofix.InstanceAutoFix
 import com.mio.manager.RendererManager
 import com.mio.util.ImageUtil
 import com.mio.util.getFileName
@@ -146,6 +147,13 @@ class SplashActivity : FCLActivity() {
                     sharedPreferences.edit {
                         putLong("clear_cache", System.currentTimeMillis())
                     }
+                }
+            }
+            // 实例自检：默认启用版本隔离、老 JDK 上的 -XX:UseSVE=0、MC 26.2+ 的 OpenGL 后端。
+            // 独立协程、不 await——这一步要碰网络和磁盘，绝不能挡启动。
+            lifecycleScope.launch(Dispatchers.IO) {
+                runCatching { InstanceAutoFix.applyAll() }.exceptionOrNull()?.let {
+                    Logging.LOG.log(Level.WARNING, "InstanceAutoFix failed", it)
                 }
             }
             startActivity(
