@@ -1,0 +1,40 @@
+# Copyright 2016-2021 The Khronos Group Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+*.o
+*.d
+*.txt
+/build
+/test
+/spirv-cross
+/obj
+/msvc/x64
+/msvc/Debug
+/msvc/Release
+*.suo
+*.sdf
+*.opensdf
+*.shader
+*.a
+*.bc
+/external
+.vs/
+*.vcxproj.user
+
+# Mac OS X Finder
+.DS_Store
+
+!CMakeLists.txt
+!LICENSES/*.txt
+
+# Running tests leaves *.spv files in the root directory.
+*.spv
+
+# ---------------------------------------------------------------------------
+# HarmonyFCL vendored 副本追加（上游原文到此为止）
+#
+# 上面那条 `*.spv` 没有前导斜杠，本意只是忽略**跑测试时落在仓库根目录**的产物，
+# 但它在任意深度都匹配，会连带吞掉 tests-other/ 下 6 个**上游跟踪的**测试输入
+# （SPIRV-Cross 自己 ctest 要读它们）。这里把那一组放行。
+# ---------------------------------------------------------------------------
+!tests-other/*.spv

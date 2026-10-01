@@ -15,6 +15,7 @@
 刻意**不含**以下内容（都在仓库里以别的方式提供）：
 
   * third_party/MobileGlues/   —— vendored 的 MobileGlues 源码（体积原因，见该目录下 README）
+  * third_party/MobileGL/      —— 同上，MobileGL 侧 vendored 的源码
   * FCL/src/main/jniLibs/*/libmobileglues.so
                                —— 由上面那份源码构建出的二进制（见 BUILD.md 的构建步骤）
   * FCL/src/main/jniLibs/arm64-v8a/libMobileGL.so
@@ -45,8 +46,9 @@
     https://api.github.com/repos/FCL-Team/FoldCraftLauncher/compare/<旧>...refs/tags/<新>
 
 生成的补丁必须验证：在干净的上游检出上 git apply --check 通过，且应用后与仓库内容一致。
-注意本仓库的 blob 是 LF、Windows 检出是 CRLF —— 比对前先把 CRLF 归一化成 LF，
-否则会全线报不一致。
+注意**本仓库里连 blob 都是 CRLF**（这条容易被 .gitattributes 里的 `* text=auto` 误导 ——
+实测归一化并没有发生，初始提交起就是 CRLF），上游原文与 ref/ 也都是 CRLF。
+比对前先把两侧都归一化成 LF，否则会因为行尾差异全线报不一致。
 
 
 diff --git a/.gitattributes b/.gitattributes
@@ -62,7 +64,7 @@ diff --git a/.gitattributes b/.gitattributes
 diff --git a/.gitignore b/.gitignore
 --- a/.gitignore
 +++ b/.gitignore
-@@ -35,3 +35,15 @@
+@@ -35,3 +35,25 @@
  /.zcode/
  .kotlin/
  .zcodeignore
@@ -78,6 +80,16 @@ diff --git a/.gitignore b/.gitignore
 +# vendored MobileGlues 源码里的本地构建目录与产物（cmake -B build-<abi> 产生）
 +/third_party/MobileGlues/MobileGlues-cpp/build-*/
 +/third_party/MobileGlues/dist/
++
++# 上面第 3 行的 `build/` 没有前导斜杠，在任意深度都匹配，会连带吞掉 vendored MobileGL 里
++# xxHash 子模块自带的 build/ —— 那是上游**跟踪的源码**（cmake 配置模板与 make 脚本，7 个
++# 文件），不是构建产物。本 fork 自己的构建目录一律写成 build-<abi>，与它不冲突。
++!/third_party/MobileGL/3rdparty/xxHash/build/
++!/third_party/MobileGL/3rdparty/xxHash/build/**
++
++# vendored MobileGL 源码里的本地构建目录与产物（cmake -S third_party/MobileGL -B build-<abi>）
++# 与上面 xxHash 那条不冲突：那条是 `build/`，这条是 `build-<abi>`。
++/third_party/MobileGL/build-*/
 diff --git a/FCL/build.gradle.kts b/FCL/build.gradle.kts
 --- a/FCL/build.gradle.kts
 +++ b/FCL/build.gradle.kts

@@ -101,15 +101,11 @@ cp build-armeabi-v7a/libmobileglues.so    ../../FCL/src/main/jniLibs/armeabi-v7a
 | 补丁 | `patches/mobilegl-no-vulkan.patch`（4 个文件，内容见第 4 节） |
 | 许可证 | **LGPL-3.0**（见第 10 节与 [NOTICE.md](NOTICE.md)） |
 
-```bash
-git clone https://github.com/MobileGL-Dev/MobileGL && cd MobileGL
-git checkout 08124c99f12ab2283cc15e4dc64ea972ecbd49c1
-git apply /path/to/patches/mobilegl-no-vulkan.patch
+源码用仓库里 vendored 的那份（`third_party/MobileGL/`，已含补丁与全部子模块内容），
+**不需要 clone、不需要初始化子模块**：
 
-# 子模块。DirectVulkan 摘掉之后 Vulkan-Headers 仍是**编译期**依赖：
-# MobileGL/Includes.h 无条件 #include <vulkan/vulkan.h>，`vulkan` 那个链接项才是
-# DT_NEEDED 的来源。所以别顺手把 Vulkan-Headers 也删了 —— 会编不过。
-git submodule update --init --recursive --depth 1
+```bash
+cd third_party/MobileGL
 
 NDK=/path/to/android-ndk              # 27.3.13750724 实测通过
 CMAKE=/path/to/cmake/bin/cmake        # 3.22.1 + ninja 实测通过；需要支持 C++23 的工具链
@@ -122,6 +118,22 @@ $CMAKE -S . -B build-arm64-v8a -G Ninja \
   -DANDROID_STL=c++_static \
   -DCMAKE_BUILD_TYPE=Release
 $CMAKE --build build-arm64-v8a --target MobileGL -j 8
+```
+
+> 构建目录一律用 `build-<abi>`，别用 `build/` —— vendored 树里 `3rdparty/xxHash/build/`
+> 是上游自己的源码目录，撞名会让 `.gitignore` 与清理都变麻烦。
+
+想验证「vendored 的那份确实等于上游 + 补丁」，再走一遍从上游还原的路：
+
+```bash
+git clone https://github.com/MobileGL-Dev/MobileGL && cd MobileGL
+git checkout 08124c99f12ab2283cc15e4dc64ea972ecbd49c1
+git apply /path/to/patches/mobilegl-no-vulkan.patch
+
+# 子模块。DirectVulkan 摘掉之后 Vulkan-Headers 仍是**编译期**依赖：
+# MobileGL/Includes.h 无条件 #include <vulkan/vulkan.h>，`vulkan` 那个链接项才是
+# DT_NEEDED 的来源。所以别顺手把 Vulkan-Headers 也删了 —— 会编不过。
+git submodule update --init --recursive --depth 1
 ```
 
 > 子模块克隆卡住时（`git submodule update` 一次要拉 9 个仓库，很容易超时），可以按
@@ -439,11 +451,9 @@ id 改写后三处天然一致，代码里的默认值一个字都不用改。
 
 - **MobileGlues** 是 **LGPL-2.1-only**，以独立共享库（`lib/<abi>/libmobileglues.so`）形式随 APK
   分发，其**完整修改版源码**在 `third_party/MobileGlues/`。
-- **MobileGL** 是 **LGPL-3.0**，以独立共享库（`lib/arm64-v8a/libMobileGL.so`）形式随 APK 分发。
-  与 MobileGlues 不同，它的源码**没有 vendored 进本仓库** —— 仓库里放的是
-  `patches/mobilegl-no-vulkan.patch` 加上一个钉死的上游提交
-  （`08124c99f12ab2283cc15e4dc64ea972ecbd49c1`，见 2.2 节），按那一节命令即可还原出
-  完整的修改版源码。它静态链进去的第三方（glslang / SPIRV-Cross / SPIRV-Reflect /
+- **MobileGL** 是 **LGPL-3.0**，以独立共享库（`lib/arm64-v8a/libMobileGL.so`）形式随 APK 分发，
+  其**完整修改版源码**在 `third_party/MobileGL/`（含构建所需的 11 个子模块与嵌套子模块，
+  均已去掉各自的 `.git`）。它静态链进去的第三方（glslang / SPIRV-Cross / SPIRV-Reflect /
   xxHash / asio / flat_hash_map 等）逐项列在 NOTICE.md。
 
 逐项的许可证与来源见 **[NOTICE.md](NOTICE.md)**。

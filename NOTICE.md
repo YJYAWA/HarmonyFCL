@@ -54,22 +54,23 @@
   （摘除 `DirectVulkan` 后端与 `DriverPost` 诊断入口、去掉 `vulkan` 链接项、硬锁 `DirectGLES`；
   逐项说明见 [BUILD.md 第 4 节](BUILD.md#关于绝不调用-vulkan)）
 
-**它的完整修改版源码没有 vendored 进本仓库。** 与 MobileGlues 不同（那边把源码整棵树放了进来），
-这里放的是**补丁 + 钉死的上游提交**：按 [BUILD.md 2.2 节](BUILD.md#22-mobilegl--libmobileglso)
-的命令 `git checkout 08124c99…` 后套用该补丁，即可还原出与本仓库内置 `.so` 一一对应的源码。
+**完整修改版源码在 [`third_party/MobileGL/`](third_party/MobileGL/)**，与 MobileGlues 那一侧
+同样是把整棵树 vendored 进来（含构建所需的 9 个子模块与 glslang 的 2 个嵌套子模块，均已
+去掉各自的 `.git`，克隆后无需初始化子模块）。任何接收本构建产物的人都可以用它自行重建、
+替换 `libMobileGL.so`。
 
 分发方式与 LGPL 合规说明：
 
 `libMobileGL.so` 以**独立的共享库文件**随 APK 分发（路径 `lib/arm64-v8a/libMobileGL.so`），
 既不是静态链接、也没有被改写进 FCL 自己的二进制里（`useLegacyPackaging = true`，
 运行时解压到 `nativeLibraryDir`，替换该文件即可替换渲染器）。
+配合上方的完整修改版源码，接收者具备自行重建与替换该库的全部条件。
 
-> ⚠️ 本仓库**只提供补丁与上游指针，不提供源码本体**。LGPL-3.0 对"对应源码"（Corresponding
-> Source）的要求比 LGPL-2.1 更明确，通常认为**必须给出源码本身或一份书面要约**，仅仅指向上游
-> 加一个补丁是否足够是有争议的。MobileGlues 那一侧用的是"完整源码 + 动态链接"，是稳妥做法；
-> MobileGL 这一侧目前不是。如果你是下游再分发者，**请自行确认这个安排是否满足你的场景**——
-> 需要的话把上游源码整棵 vendored 进 `third_party/MobileGL/`（含 2.2 节列出的 11 个子模块）
-> 即可与 MobileGlues 拉齐。
+> 📌 与 MobileGlues 那一侧的一处差别：MobileGL 的 vendored 副本**未包含
+> `tools/trace_replay/fixtures/`**（上游用 Git LFS 存的 trace 回放素材，构建用不到），
+> 以及 18 个被各自 `.gitignore` 排除的第三方测试/缓存文件。逐项清单见
+> [`third_party/MobileGL/README.md`](third_party/MobileGL/README.md)。这些都不影响
+> `libMobileGL.so` 的重建。
 
 ---
 
@@ -99,7 +100,7 @@
 
 各目录内保留了其原始许可证文件。
 
-### MobileGL 侧（源码未 vendored，按 2.2 节还原）
+### MobileGL 侧（vendored 在 `third_party/MobileGL/` 下）
 
 以下组件会被**静态链接进 `libMobileGL.so`**，因此属于随产物分发的部分：
 
@@ -118,12 +119,21 @@
 `libspirv-reflect-static.a`、`libSPIRV-Tools.a`、`libSPIRV-Tools-opt.a`、`libglslang.a`、
 `libxxhash.a`。asio 与 flat_hash_map 是头文件库，以**内联代码**形式进入 MobileGL 自己的目标文件。
 
-上游 `.gitmodules` 里还有 `3rdparty/Vulkan-Headers`、`3rdparty/Vulkan-Utility-Libraries`、
-`3rdparty/VulkanMemoryAllocator`、`3rdparty/DiligentCore`、`3rdparty/apitrace`、`3rdparty/tracy`，
-它们**一个都没有被编进 `libMobileGL.so`** —— 实测这三个 Vulkan 相关目录下各 0 个 `.o`，
-另外三个在本 fork 的构建里根本没检出（也不需要检出）。
+上游 `.gitmodules` 声明了 12 个子模块。另有下面三个 Vulkan 相关目录**也在树里**，
+但**一个都没有被编进 `libMobileGL.so`** —— 实测这三个目录下各 0 个 `.o`：
+
+| 组件 | 上游 | 固定提交 | 许可证 |
+| --- | --- | --- | --- |
+| Vulkan-Headers | <https://github.com/KhronosGroup/Vulkan-Headers> | `ad9ce1235e88dc09287e19171dfac384db8ec32c` | Apache-2.0 |
+| Vulkan-Utility-Libraries | <https://github.com/KhronosGroup/Vulkan-Utility-Libraries> | `738ec97a3f659dd6469bff3c4078ef981b0a343f` | Apache-2.0 |
+| VulkanMemoryAllocator | <https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator> | `e722e57c891a8fbe3cc73ca56c19dd76be242759` | MIT |
+
 `Vulkan-Headers` 只是个**编译期**依赖（`MobileGL/Includes.h` 无条件 include `vulkan/vulkan.h`），
-只出头文件、不产生链接产物，因此不计入分发。
+只出头文件、不产生链接产物，因此不计入分发；删掉它反而会编不过。
+
+还有三个子模块**是空目录，本仓库没有 vendored**（上游在这三个目录里也没放东西，构建用不到）：
+`3rdparty/DiligentCore`（`f36e6388…`）、`3rdparty/tracy`（`e6b9ea46…`）、
+`3rdparty/apitrace`（`c8036190…`）。
 
 各目录内保留了其原始许可证文件。
 

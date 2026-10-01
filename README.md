@@ -226,14 +226,17 @@ export JAVA_HOME=/path/to/jdk-17        # JDK 17
 ./gradlew :FCL:assembleRelease -Darch=arm64        # 只出 arm64，包更小
 ```
 
-`libmobileglues.so` 已经**预置**在 `FCL/src/main/jniLibs/<abi>/`，不需要先编译它。
+`libmobileglues.so` 与 `libMobileGL.so`（仅 `arm64-v8a`）都已经**预置**在
+`FCL/src/main/jniLibs/<abi>/`，不需要先编译它们。
 产物落在 `FCL/build/outputs/apk/release/`。完整环境要求、参数、验证步骤见 **[BUILD.md](BUILD.md)**。
 
 **没有签名密钥也能构建** —— 会自动回落到仓库自带的调试密钥（产物是调试签名，
 不能覆盖安装正式包）。要长期发布就自己生成一份，见 BUILD.md「签名密钥」。
 
-想自己重建渲染器库（改 MobileGlues 代码，或者验证它确实不含 Vulkan）：
-源码在 [`third_party/MobileGlues/`](third_party/MobileGlues/)，构建命令见 BUILD.md 第 2 节。
+想自己重建渲染器库（改渲染器代码，或者验证它们确实不含 Vulkan）：两份源码都在
+[`third_party/`](third_party/) 下，**已含全部子模块内容，克隆后不需要初始化子模块**
+—— MobileGlues 在 [`third_party/MobileGlues/`](third_party/MobileGlues/)、
+MobileGL 在 [`third_party/MobileGL/`](third_party/MobileGL/)，构建命令见 BUILD.md 第 2 节。
 
 ## 默认键位
 
@@ -286,11 +289,12 @@ export JAVA_HOME=/path/to/jdk-17        # JDK 17
 | --- | --- |
 | 本 fork（FoldCraftLauncher 衍生） | **GPL-3.0**，见 [LICENSE](LICENSE) |
 | [MobileGlues](https://github.com/MobileGL-Dev/MobileGlues) | **LGPL-2.1-only**，以独立共享库分发，完整修改版源码在 [`third_party/MobileGlues/`](third_party/MobileGlues/) |
-| [MobileGL](https://github.com/MobileGL-Dev/MobileGL) | **LGPL-3.0**，以独立共享库分发，**源码未 vendored**——仓库里放的是补丁 + 钉死的上游提交，见 [NOTICE.md](NOTICE.md) |
+| [MobileGL](https://github.com/MobileGL-Dev/MobileGL) | **LGPL-3.0**，以独立共享库分发，完整修改版源码在 [`third_party/MobileGL/`](third_party/MobileGL/) |
 | glslang / SPIRV-Cross / SPIRV-Tools / xxhash / ska 等 | 见 [NOTICE.md](NOTICE.md) |
 
-> MobileGL 那一栏的合规安排**弱于** MobileGlues 那一栏（后者给了完整源码，前者只给补丁与
-> 上游指针）。下游再分发者请自行确认这够不够，详见 [NOTICE.md](NOTICE.md) 里的说明。
+> 两个渲染器都用「动态链接 + 完整对应源码」的安排：`.so` 作为独立共享库随 APK 分发
+> （不是静态链接、也没被改写进 FCL 自己的二进制），源码整棵在 `third_party/` 下，
+> 因此接收者具备自行重建与替换的全部条件。逐项说明见 [NOTICE.md](NOTICE.md)。
 
 感谢 **FoldCraftLauncher**、**MobileGlues** 与 **MobileGL** 三个上游项目。
 如果这个 fork 对你有用，也请去给上游点 star。

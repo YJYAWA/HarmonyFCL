@@ -1,0 +1,72 @@
+apply plugin: 'com.android.library'
+
+def mobileGlLogActiveLevel = {
+    (rootProject.findProperty('mobilegl.logLevel') ?: System.getenv('MOBILEGL_LOG_ACTIVE_LEVEL') ?: 'MOBILEGL_LOG_LEVEL_INFO') as String
+}
+def standalonePluginBuild = rootProject.name == 'MobileGLPlugin'
+
+android {
+    namespace 'top.mobilegl.mobilegl'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 26
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DMOBILEGL_LOG_ACTIVE_LEVEL=${mobileGlLogActiveLevel()}"
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+        proguard {
+            minifyEnabled true
+            initWith debug
+        }
+        fordebug {
+            debuggable true
+            // Keep the APK debuggable (simpleperf --app, JDWP) but build the
+            // native library like a release: AGP maps debuggable build types to
+            // CMAKE_BUILD_TYPE=Debug, which compiles MobileGL at -O0 and makes
+            // every performance measurement on this flavor meaningless.
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+                }
+            }
+        }
+    }
+    if (standalonePluginBuild) {
+        flavorDimensions 'profile'
+        productFlavors {
+            plugin {
+                dimension 'profile'
+            }
+            trace {
+                dimension 'profile'
+                externalNativeBuild {
+                    cmake {
+                        arguments '-DMOBILEGL_TRACE_ANGLE_VARIANTS=ON'
+                    }
+                }
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path "CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    ndkVersion '27.3.13750724'
+}

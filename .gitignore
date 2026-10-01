@@ -47,3 +47,13 @@ harmony-fcl.jks
 # vendored MobileGlues 源码里的本地构建目录与产物（cmake -B build-<abi> 产生）
 /third_party/MobileGlues/MobileGlues-cpp/build-*/
 /third_party/MobileGlues/dist/
+
+# 上面第 3 行的 `build/` 没有前导斜杠，在任意深度都匹配，会连带吞掉 vendored MobileGL 里
+# xxHash 子模块自带的 build/ —— 那是上游**跟踪的源码**（cmake 配置模板与 make 脚本，7 个
+# 文件），不是构建产物。本 fork 自己的构建目录一律写成 build-<abi>，与它不冲突。
+!/third_party/MobileGL/3rdparty/xxHash/build/
+!/third_party/MobileGL/3rdparty/xxHash/build/**
+
+# vendored MobileGL 源码里的本地构建目录与产物（cmake -S third_party/MobileGL -B build-<abi>）
+# 与上面 xxHash 那条不冲突：那条是 `build/`，这条是 `build-<abi>`。
+/third_party/MobileGL/build-*/

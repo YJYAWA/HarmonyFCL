@@ -1,0 +1,780 @@
+﻿name: Test
+
+on:
+  push:
+    branches:
+      - dev
+      - Feat/Backend-Direct-GLES
+      - Feat/Backend-Direct-Vulkan
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    env:
+      BUILD_DIR: build-linux
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: "true"
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 4G
+      CCACHE_NOHASHDIR: "true"
+
+    steps:
+      - name: Set Swap Space
+        uses: pierotofy/set-swap-space@v1.0
+        with:
+          swap-size-gb: 32
+
+      - name: Checkout repo
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Get CMake
+        uses: lukka/get-cmake@v4.3.3
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v5
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-test-${{ github.job }}-ccache-v1
+          restore-keys: |
+            ${{ runner.os }}-test-${{ github.job }}-ccache-
+
+      - name: Prepare Vulkan SDK
+        uses: humbletim/setup-vulkan-sdk@v1.2.1
+        with:
+          vulkan-query-version: 1.4.304.1
+          vulkan-components: Vulkan-Headers, Vulkan-Loader
+          vulkan-use-cache: true
+
+      - name: Update glslang external sources
+        working-directory: 3rdparty/glslang
+        run: python update_glslang_sources.py
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache clang-20 clang++-20 lld-20 libc++-20-dev libc++abi-20-dev libvulkan-dev libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers ninja-build
+
+      - name: Show installed toolchain
+        run: |
+          ccache --version
+          clang-20 --version
+          clang++-20 --version
+          ld.lld-20 --version || ld.lld --version || true
+          dpkg -l 'libc++*' 'libegl*' 'libgles*' 'mesa*' 'vulkan*' || true
+
+      - name: Configure CMake
+        run: |
+          if [ "${{ secrets.ACTIONS_STEP_DEBUG }}" = "true" ]; then
+            BUILD_TYPE=Debug
+          else
+            BUILD_TYPE=Release
+          fi
+
+          cmake -S . -B "${BUILD_DIR}" -G Ninja \
+            -DCMAKE_C_COMPILER=clang-20 \
+            -DCMAKE_CXX_COMPILER=clang++-20 \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+            -DMOBILEGL_LOG_ACTIVE_LEVEL=MOBILEGL_LOG_LEVEL_INFO \
+            -DMOBILEGL_BUILD_TEST=ON \
+            -DMOBILEGL_BUILD_BENCHMARK=ON \
+            -DMOBILEGL_BUILD_INTEGRATION_TEST=ON \
+            -DMOBILEGL_ITEST_VK_ICD=/usr/share/vulkan/icd.d/lvp_icd.json \
+            -DMOBILEGL_BUILD_TRACE_REPLAY=OFF \
+            -DBENCHMARK_DOWNLOAD_DEPENDENCIES=ON \
+            -DBENCHMARK_ENABLE_TESTING=OFF \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+      - name: Build
+        run: cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache --show-stats
+
+      # Rewrite one rolling entry per job on the default branch. The upload stays
+      # cumulative - it carries every object restored at the top of this run plus
+      # the few TUs that actually changed - but Actions cache keys are immutable,
+      # so the superseded blob has to be released before the same key can be
+      # re-uploaded. Running after the build means a failed build leaves the
+      # existing entry untouched. The other trigger branches restore this entry
+      # rather than each writing one of their own.
+      - name: Release superseded ccache entry
+        if: github.ref_name == github.event.repository.default_branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CACHE_KEY: ${{ runner.os }}-test-${{ github.job }}-ccache-v1
+        run: gh cache delete "${CACHE_KEY}" || true
+
+      - name: Save ccache
+        if: github.ref_name == github.event.repository.default_branch
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-test-${{ github.job }}-ccache-v1
+
+      - name: Package Linux runtime
+        run: |
+          mkdir -p ci-artifacts
+          mapfile -t SHARED_LIBS < <(find "${BUILD_DIR}" -type f \( -name '*.so' -o -name '*.so.*' \) -print | sort)
+          tar \
+            --exclude='*/CMakeFiles' \
+            --exclude='*.o' \
+            --exclude='*.a' \
+            --exclude='*.ninja*' \
+            --exclude='build.ninja' \
+            --exclude='cmake_install.cmake' \
+            -czf ci-artifacts/mobilegl-linux-runtime.tgz \
+            "${BUILD_DIR}/CTestTestfile.cmake" \
+            "${BUILD_DIR}/MobileGL/MG_Test" \
+            "${BUILD_DIR}/MobileGL/MG_Benchmark" \
+            "${BUILD_DIR}/MobileGL/MG_IntegrationTest" \
+            "${SHARED_LIBS[@]}"
+
+      - name: Upload Linux runtime
+        uses: actions/upload-artifact@v7
+        with:
+          name: mobilegl-linux-runtime
+          path: ci-artifacts/mobilegl-linux-runtime.tgz
+          if-no-files-found: error
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build-linux
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Get CMake
+        uses: lukka/get-cmake@v4.3.3
+
+      - name: Install runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 libegl1 libgles2 libgl1-mesa-dri mesa-vulkan-drivers
+
+      - name: Download Linux runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: mobilegl-linux-runtime
+          path: .
+
+      - name: Unpack Linux runtime
+        run: tar -xzf mobilegl-linux-runtime.tgz
+
+      - name: Normalize CTest command paths
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          for path in Path('build-linux').rglob('CTestTestfile.cmake'):
+              text = path.read_text()
+              text = re.sub(r'"[^"]*/cmake-[^"]*/bin/cmake"', '"cmake"', text)
+              path.write_text(text)
+          PY
+
+      - name: Test
+        working-directory: build-linux
+        run: |
+          ulimit -c unlimited
+          sudo sysctl -w kernel.core_pattern='/tmp/core.%e.%p'
+          if [ "${{ secrets.ACTIONS_STEP_DEBUG }}" = "true" ]; then
+            ctest -V -L unit --no-tests=error
+          else
+            ctest --output-on-failure -L unit --no-tests=error
+          fi
+
+      - name: Upload core dumps
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-core-dumps
+          path: /tmp/core.*
+          if-no-files-found: ignore
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: build-linux
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Get CMake
+        uses: lukka/get-cmake@v4.3.3
+
+      - name: Install runtime dependencies
+        # Same set as the benchmark job, for the same reason: the scenarios bring
+        # up real headless EGL (llvmpipe) and Vulkan (lavapipe) contexts, and
+        # libegl-mesa0 - the EGL vendor library behind glvnd's libegl1 dispatch -
+        # only arrives as a Recommends.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri mesa-vulkan-drivers
+
+      - name: Download Linux runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: mobilegl-linux-runtime
+          path: .
+
+      - name: Unpack Linux runtime
+        run: tar -xzf mobilegl-linux-runtime.tgz
+
+      - name: Normalize CTest command paths
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          for path in Path('build-linux').rglob('CTestTestfile.cmake'):
+              text = path.read_text()
+              text = re.sub(r'"[^"]*/cmake-[^"]*/bin/cmake"', '"cmake"', text)
+              path.write_text(text)
+          PY
+
+      - name: Integration scenarios
+        working-directory: build-linux
+        # REQUIRE_GPU makes a driverless runner FAIL instead of skipping every
+        # scenario - an all-skip run is otherwise indistinguishable from a pass,
+        # which is how a five-month-old draw-dropping bug survived unseen until
+        # this lane existed.
+        #
+        # The lavapipe ICD pin lives in the build-linux configure
+        # (-DMOBILEGL_ITEST_VK_ICD), NOT here: the configure bakes it into each
+        # test's ctest ENVIRONMENT property, and a property entry OVERRIDES the
+        # job environment - a VK_ICD_FILENAMES exported here would be silently
+        # ignored while looking like it works. This lane runs on lavapipe
+        # deterministically, not on whichever of the eight Mesa ICDs a GPU-less
+        # runner enumerates first.
+        #
+        # Cores are armed so that any crash - the harness pre-flight child's
+        # included - leaves /tmp/core.*, which the failure-only step below ships
+        # as an artifact. Analyzing a downloaded core against the runtime
+        # artifact's binary in an ubuntu-24.04 userspace reproduces the exact
+        # crash stack without burning a CI round on an in-workflow debugger.
+        env:
+          MOBILEGL_ITEST_REQUIRE_GPU: "1"
+          MOBILEGL_MAGMA_FIX_ITERATIONRP_SUBGROUP_SCRATCH: "1"
+          MOBILEGL_MAGMA_DERIVE_NUM_SUBGROUPS: "1"
+          MOBILEGL_MAGMA_ITERATIONRP_FIX_BARRIER: "1"
+        run: |
+          ulimit -c unlimited
+          sudo sysctl -w kernel.core_pattern='/tmp/core.%e.%p'
+          # Second, filtered pass: with the range-invalidating map flush disabled,
+          # the buffer scenarios run on the upload ring's staged-copy tier - which
+          # the default pass never reaches (the map tier absorbs every flush on
+          # Mesa), so without this the Mali fallback tier would have zero CI
+          # coverage. The flag is NOT baked into the ctest ENVIRONMENT properties,
+          # so an inline env reaches the test processes (unlike the ICD pin above).
+          if [ "${{ secrets.ACTIONS_STEP_DEBUG }}" = "true" ]; then
+            ctest -V -L integration-gpu --no-tests=error
+            MOBILEGL_ESPRYT_DISABLE_INVALIDATE_FLUSH=1 ctest -V -L integration-gpu \
+              -R 'Buffer|Readback|Atomic|Ssbo|Arena' --no-tests=error
+          else
+            ctest --output-on-failure -L integration-gpu --no-tests=error
+            MOBILEGL_ESPRYT_DISABLE_INVALIDATE_FLUSH=1 ctest --output-on-failure -L integration-gpu \
+              -R 'Buffer|Readback|Atomic|Ssbo|Arena' --no-tests=error
+          fi
+
+      - name: Upload core dumps
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-core-dumps
+          path: /tmp/core.*
+          if-no-files-found: ignore
+
+  benchmark:
+    runs-on: ubuntu-latest
+    needs: build-linux
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Get CMake
+        uses: lukka/get-cmake@v4.3.3
+
+      - name: Install runtime dependencies
+        # libegl-mesa0 is the EGL vendor library itself: DriverBench brings up a
+        # real GL context, and libegl1 is only glvnd's dispatch. It normally
+        # arrives as a Recommends of libegl1, which is too quiet a dependency for
+        # the one job that needs a working driver.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri mesa-vulkan-drivers
+
+      - name: Download Linux runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: mobilegl-linux-runtime
+          path: .
+
+      - name: Unpack Linux runtime
+        run: tar -xzf mobilegl-linux-runtime.tgz
+
+      - name: Normalize CTest command paths
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          for path in Path('build-linux').rglob('CTestTestfile.cmake'):
+              text = path.read_text()
+              text = re.sub(r'"[^"]*/cmake-[^"]*/bin/cmake"', '"cmake"', text)
+              path.write_text(text)
+          PY
+
+      - name: Benchmark
+        working-directory: build-linux
+        run: |
+          ulimit -c unlimited
+          sudo sysctl -w kernel.core_pattern='/tmp/core.%e.%p'
+          ctest -V -C Release -L benchmark --no-tests=error
+
+      - name: Upload core dumps
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-core-dumps
+          path: /tmp/core.*
+          if-no-files-found: ignore
+
+  build-retrace:
+    runs-on: ubuntu-latest
+    needs:
+      - build-linux
+      - test
+      - benchmark
+      - integration
+    permissions:
+      actions: write
+      contents: read
+    env:
+      BUILD_DIR: build-retrace
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: "true"
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 4G
+      CCACHE_NOHASHDIR: "true"
+      MOBILEGL_LIBRARY: ${{ github.workspace }}/build-linux/libMobileGL.so
+
+    steps:
+      - name: Set Swap Space
+        uses: pierotofy/set-swap-space@v1.0
+        with:
+          swap-size-gb: 32
+
+      - name: Checkout repo
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Get CMake
+        uses: lukka/get-cmake@v4.3.3
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v5
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-test-${{ github.job }}-ccache-v1
+          restore-keys: |
+            ${{ runner.os }}-test-${{ github.job }}-ccache-
+
+      - name: Prepare Vulkan SDK
+        uses: humbletim/setup-vulkan-sdk@v1.2.1
+        with:
+          vulkan-query-version: 1.4.304.1
+          vulkan-components: Vulkan-Headers, Vulkan-Loader
+          vulkan-use-cache: true
+
+      - name: Update glslang external sources
+        working-directory: 3rdparty/glslang
+        run: python update_glslang_sources.py
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache clang-20 clang++-20 lld-20 libc++-20-dev libc++abi-20-dev libvulkan-dev libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers ninja-build
+
+      - name: Show installed toolchain
+        run: |
+          ccache --version
+          clang-20 --version
+          clang++-20 --version
+          ld.lld-20 --version || ld.lld --version || true
+          dpkg -l 'libc++*' 'libegl*' 'libgles*' 'mesa*' 'vulkan*' || true
+
+      - name: Download Linux runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: mobilegl-linux-runtime
+          path: .
+
+      - name: Unpack Linux runtime
+        run: |
+          tar -xzf mobilegl-linux-runtime.tgz
+          test -f "${MOBILEGL_LIBRARY}"
+
+      - name: Configure CMake
+        run: |
+          if [ "${{ secrets.ACTIONS_STEP_DEBUG }}" = "true" ]; then
+            BUILD_TYPE=Debug
+          else
+            BUILD_TYPE=Release
+          fi
+
+          cmake -S . -B "${BUILD_DIR}" -G Ninja \
+            -DCMAKE_C_COMPILER=clang-20 \
+            -DCMAKE_CXX_COMPILER=clang++-20 \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+            -DMOBILEGL_LOG_ACTIVE_LEVEL=MOBILEGL_LOG_LEVEL_INFO \
+            -DMOBILEGL_BUILD_TEST=OFF \
+            -DMOBILEGL_BUILD_BENCHMARK=OFF \
+            -DMOBILEGL_BUILD_TRACE_REPLAY=ON \
+            -DMOBILEGL_TRACE_REPLAY_MOBILEGL_LIBRARY="${MOBILEGL_LIBRARY}" \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+      - name: Build trace replay
+        run: cmake --build "${BUILD_DIR}" --target mobilegl_trace_replay --parallel "$(nproc)"
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache --show-stats
+
+      - name: Release superseded ccache entry
+        if: github.ref_name == github.event.repository.default_branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CACHE_KEY: ${{ runner.os }}-test-${{ github.job }}-ccache-v1
+        run: gh cache delete "${CACHE_KEY}" || true
+
+      - name: Save ccache
+        if: github.ref_name == github.event.repository.default_branch
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-test-${{ github.job }}-ccache-v1
+
+      - name: Normalize CTest command paths
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          for path in Path('build-retrace').rglob('CTestTestfile.cmake'):
+              text = path.read_text()
+              text = re.sub(r'"[^"]*/cmake-[^"]*/bin/cmake"', '"cmake"', text)
+              path.write_text(text)
+          PY
+
+      - name: Package trace replay
+        run: |
+          mkdir -p ci-artifacts
+          tar -czf ci-artifacts/mobilegl-trace-replay.tgz \
+            build-retrace/tools/trace_replay/mobilegl_trace_replay \
+            build-retrace/tools/trace_replay/CTestTestfile.cmake
+
+      - name: Upload trace replay
+        uses: actions/upload-artifact@v7
+        with:
+          name: mobilegl-trace-replay
+          path: ci-artifacts/mobilegl-trace-replay.tgz
+          if-no-files-found: error
+
+  trace-cases:
+    name: trace case matrix
+    runs-on: ubuntu-latest
+    needs:
+      - test
+      - benchmark
+      - integration
+    outputs:
+      matrix: ${{ steps.trace-cases.outputs.matrix }}
+      names: ${{ steps.trace-cases.outputs.names }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Load trace cases
+        id: trace-cases
+        run: |
+          echo "matrix=$(python3 tools/trace_replay/trace_cases.py --ci --format github-test-matrix)" >> "$GITHUB_OUTPUT"
+          echo "names=$(python3 tools/trace_replay/trace_cases.py --ci --format names)" >> "$GITHUB_OUTPUT"
+
+  trace-fixtures:
+    name: trace fixture (${{ matrix.case }})
+    runs-on: ubuntu-latest
+    needs: trace-cases
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        case: ${{ fromJSON(needs.trace-cases.outputs.names) }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Derive trace fixture cache key
+        id: fixture-key
+        run: bash .github/scripts/trace-fixture-cache.sh key '${{ matrix.case }}'
+
+      - name: Restore trace fixture cache
+        id: fixture-cache
+        if: steps.fixture-key.outputs.cacheable == 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ steps.fixture-key.outputs.paths }}
+          key: ${{ steps.fixture-key.outputs.key }}
+
+      - name: Verify restored trace fixture
+        id: fixture-verify
+        if: steps.fixture-cache.outputs.cache-hit == 'true'
+        run: |
+          if bash .github/scripts/trace-fixture-cache.sh verify '${{ matrix.case }}'; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Cached fixture for ${{ matrix.case }} failed verification; falling back to the download path"
+            bash .github/scripts/trace-fixture-cache.sh reset '${{ matrix.case }}'
+          fi
+
+      - name: Fetch trace fixture
+        if: steps.fixture-verify.outputs.ok != 'true'
+        run: bash .github/scripts/fetch-trace-fixture-lfs.sh '${{ matrix.case }}'
+
+      - name: Save trace fixture cache
+        if: steps.fixture-key.outputs.cacheable == 'true' && steps.fixture-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ steps.fixture-key.outputs.paths }}
+          key: ${{ steps.fixture-key.outputs.key }}
+
+      - name: Stage trace fixture
+        run: |
+          safe_case="$(printf '%s' '${{ matrix.case }}' | sed 's/[^A-Za-z0-9._-]/_/g')"
+          stage_dir="trace-fixtures/${safe_case}"
+          mkdir -p "${stage_dir}"
+          python3 tools/trace_replay/trace_cases.py --format fixture-files --case '${{ matrix.case }}' |
+            while IFS= read -r file; do
+              cp "${file}" "${stage_dir}/"
+            done
+
+      - name: Upload trace fixture
+        uses: actions/upload-artifact@v7
+        with:
+          name: trace-fixture-${{ matrix.case }}
+          path: trace-fixtures/**
+          if-no-files-found: error
+
+  retrace:
+    name: retrace (${{ matrix.backend }}, ${{ matrix.case }})
+    runs-on: ubuntu-latest
+    needs:
+      - build-linux
+      - build-retrace
+      - trace-cases
+      - trace-fixtures
+    if: ${{ always() && needs.build-linux.result == 'success' && needs.build-retrace.result == 'success' && needs.trace-cases.result == 'success' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.trace-cases.outputs.matrix) }}
+
+    steps:
+      - name: Set Swap Space
+        uses: pierotofy/set-swap-space@v1.0
+        with:
+          swap-size-gb: 16
+
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Download trace fixture
+        uses: actions/download-artifact@v8
+        with:
+          name: trace-fixture-${{ matrix.case }}
+          path: trace-fixture-download
+
+      - name: Install trace fixture
+        run: |
+          mkdir -p tools/trace_replay/fixtures
+          find trace-fixture-download -type f -exec cp {} tools/trace_replay/fixtures/ \;
+
+      - name: Get CMake
+        uses: lukka/get-cmake@v4.3.3
+
+      - name: Install runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers
+          test -e /usr/lib/x86_64-linux-gnu/libEGL.so
+          test -e /usr/lib/x86_64-linux-gnu/libGLESv2.so
+
+      - name: Download Linux runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: mobilegl-linux-runtime
+          path: .
+
+      - name: Download trace replay
+        uses: actions/download-artifact@v8
+        with:
+          name: mobilegl-trace-replay
+          path: .
+
+      - name: Unpack retrace runtime
+        run: |
+          tar -xzf mobilegl-linux-runtime.tgz
+          tar -xzf mobilegl-trace-replay.tgz
+          test -f build-linux/libMobileGL.so
+          test -f build-retrace/tools/trace_replay/mobilegl_trace_replay
+
+      - name: Retrace and validate
+        working-directory: build-retrace/tools/trace_replay
+        run: |
+          ulimit -c unlimited
+          sudo sysctl -w kernel.core_pattern='/tmp/core.%e.%p'
+          if [ '${{ matrix.backend }}' = 'DirectVulkan' ]; then
+            export MOBILEGL_MAGMA_R11G11B10F_FALLBACK=1
+          fi
+          if [ '${{ matrix.backend }}' = 'DirectVulkan' ] \
+             && [ '${{ matrix.case }}' = 'minecraft-1.21.4-fabric-iris-iterationrp-in-world' ]; then
+            export MOBILEGL_MAGMA_FIX_ITERATIONRP_SUBGROUP_SCRATCH=1
+            export MOBILEGL_MAGMA_DERIVE_NUM_SUBGROUPS=1
+            export MOBILEGL_MAGMA_ITERATIONRP_FIX_BARRIER=1
+          fi
+          # The blended depth-write quirk auto-enables only on Qualcomm, which no CI
+          # runner has, so force it on for the OIT case it exists to fix. ForceOn
+          # bypasses only the vendor gate, so this exercises the real strip on
+          # lavapipe. The Android AVD lane deliberately leaves it off, keeping the
+          # unstripped path covered for the same trace.
+          if [ '${{ matrix.backend }}' = 'DirectVulkan' ] \
+             && [ '${{ matrix.case }}' = 'improved-transparency-minecraft-26.3' ]; then
+            export MOBILEGL_MAGMA_DISABLE_BLENDED_DEPTH_WRITE=1
+          fi
+          ctest -V --no-tests=error -R '^MobileGLTraceReplay\.${{ matrix.case }}\.${{ matrix.backend }}$'
+
+      - name: Upload core dumps
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: retrace-core-dumps-${{ matrix.backend }}-${{ matrix.case }}
+          path: /tmp/core.*
+          if-no-files-found: ignore
+
+      - name: Upload actual image
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: retrace-result-${{ matrix.backend }}-${{ matrix.case }}
+          path: |
+            build-retrace/tools/trace_replay/${{ matrix.case }}/actual-images/**
+            build-retrace/tools/trace_replay/${{ matrix.case }}/${{ matrix.backend }}/output/**
+          if-no-files-found: warn
+
+  retrace-summary:
+    name: retrace summary
+    runs-on: ubuntu-latest
+    needs: retrace
+    if: ${{ always() && needs.retrace.result != 'skipped' }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Set artifact metadata
+        run: |
+          echo "date_today=$(date +'%Y-%m-%d')" >> "$GITHUB_ENV"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Download retrace results
+        uses: actions/download-artifact@v8
+        with:
+          pattern: retrace-result-*
+          path: retrace-artifacts
+
+      - name: Render retrace summary
+        run: |
+          node tools/trace_replay/render_retrace_summary.mjs \
+            --input retrace-artifacts \
+            --output-dir retrace-summary \
+            --title "MobileGL Linux retrace overview" \
+            --group-label "Linux" \
+            --html mobilegl-linux-retrace-overview.html
+
+      - name: Upload retrace summary
+        uses: actions/upload-artifact@v7
+        with:
+          path: retrace-summary/mobilegl-linux-retrace-overview.html
+          archive: false
+          if-no-files-found: error
+
+  remove-artifact-clutter:
+    name: remove artifact clutter
+    runs-on: ubuntu-latest
+    needs: retrace-summary
+    if: always()
+    permissions:
+      actions: write
+    steps:
+      - name: Delete intermediate Linux retrace artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          declare -A failed_cases=()
+          while IFS= read -r job_name; do
+            case_name="${job_name#retrace (*, }"
+            case_name="${case_name%)}"
+            failed_cases["${case_name}"]=1
+          done < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" \
+              --jq '.jobs[] | select(.name | startswith("retrace (")) | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | .name'
+          )
+
+          if ((${#failed_cases[@]})); then
+            echo "Retaining fixtures for failed retrace case(s):"
+            printf '  %s\n' "${!failed_cases[@]}"
+          else
+            echo "All retrace jobs succeeded; no fixtures need to be retained."
+          fi
+
+          deleted=0
+          retained=0
+          while IFS=$'\t' read -r artifact_id artifact_name; do
+            if [[ "${artifact_name}" == trace-fixture-* ]]; then
+              case_name="${artifact_name#trace-fixture-}"
+              if [[ -v "failed_cases[${case_name}]" ]]; then
+                echo "Retaining ${artifact_name} (${artifact_id}) for failed retrace."
+                ((retained += 1))
+                continue
+              fi
+            fi
+
+            echo "Deleting ${artifact_name} (${artifact_id})"
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"
+            ((deleted += 1))
+          done < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.name | startswith("trace-fixture-") or startswith("retrace-result-")) | [.id, .name] | @tsv'
+          )
+
+          echo "Deleted ${deleted} intermediate Linux artifact(s); retained ${retained} failed-retrace fixture(s)."

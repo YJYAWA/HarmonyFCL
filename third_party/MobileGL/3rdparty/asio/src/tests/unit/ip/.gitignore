@@ -1,0 +1,41 @@
+.deps
+.dirstamp
+*.o
+*.obj
+*.exe
+*.ilk
+*.manifest
+*.pdb
+*.tds
+address
+address_v4*
+address_v6*
+basic_endpoint
+basic_resolver
+basic_resolver_entry
+basic_resolver_iterator
+basic_resolver_query
+host_name
+icmp
+multicast
+network_v4
+network_v6
+resolver_query_base
+tcp
+udp
+unicast
+v6_only
+
+# ---------------------------------------------------------------------------
+# HarmonyFCL vendored 副本追加（上游原文到此为止）
+#
+# 上面那组规则（address_v4* / address_v6* 等）本意是忽略**构建/跑测试产生的同名
+# 可执行文件**，但同时也盖住了同名的 6 个**上游跟踪的**测试源文件。它们在 asio 上游
+# 是被跟踪的（规则不影响已跟踪文件），本仓库必须显式放行，否则 vendored 副本比上游少 6 个源文件。
+# ---------------------------------------------------------------------------
+!address_v4.cpp
+!address_v4_iterator.cpp
+!address_v4_range.cpp
+!address_v6.cpp
+!address_v6_iterator.cpp
+!address_v6_range.cpp

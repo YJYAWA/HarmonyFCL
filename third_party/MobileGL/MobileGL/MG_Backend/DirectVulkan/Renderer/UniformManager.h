@@ -1,0 +1,540 @@
+// MobileGL - MobileGL/MG_Backend/DirectVulkan/Renderer/UniformDescriptorBinder.h
+// Copyright (c) 2025-2026 MobileGL-Dev
+// Licensed under the GNU Lesser General Public License v3.0:
+//   https://www.gnu.org/licenses/gpl-3.0.txt
+//   https://www.gnu.org/licenses/lgpl-3.0.txt
+// SPDX-License-Identifier: LGPL-3.0-only
+// End of Source File Header
+
+#pragma once
+
+#include "ProgramFactory.h"
+#include "VkBufferManager.h"
+#include "VkSamplerManager.h"
+#include "VkTextureManager.h"
+#include "../DescriptorPoolCensus.h"
+#include "../VkIncludes.h"
+#include <Includes.h>
+
+namespace MobileGL::MG_State::GLState {
+    class ITextureObject;
+    class ProgramObject;
+    class SamplerObject;
+}
+
+namespace MobileGL::MG_Backend::DirectVulkan {
+    class UniformManager {
+    public:
+        struct SamplerBindingOverride {
+            Uint32 binding = 0;
+            Uint32 element = 0;
+            MG_State::GLState::ITextureObject* texture = nullptr;
+            const MG_State::GLState::SamplerObject* sampler = nullptr;
+            VkImageView imageView = VK_NULL_HANDLE;
+            VkImageLayout imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            Bool forceNearestFiltering = false;
+        };
+
+        struct SamplerImageFeedbackBinding {
+            Uint32 samplerBinding = 0;
+            Uint32 samplerElement = 0;
+            MG_State::GLState::ITextureObject* texture = nullptr;
+            const MG_State::GLState::SamplerObject* sampler = nullptr;
+            SamplerNumericDomain numericDomain = SamplerNumericDomain::Unknown;
+        };
+
+        // `physicalDevice` is only ever asked for format properties: a placeholder descriptor for
+        // an unbound texel-buffer binding has to be built from a format the DEVICE accepts as a
+        // texel buffer, and there is no other route to that answer from here.
+        Bool Initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkBufferManager* bufferManager,
+                        ProgramFactory* programFactory,
+                        VkDeviceSize minUniformBufferOffsetAlignment, Uint32 frameCount,
+                        Uint32 maxBindings = 16, Uint32 setsPerFrame = 64,
+                        VkTextureManager* textureManager = nullptr, VkSamplerManager* samplerManager = nullptr);
+        void Shutdown();
+
+        void BeginFrame(Uint32 frameIndex);
+        // A command buffer (re)began recording: descriptor bindings recorded into
+        // the previous buffer do not carry over, so drop the bind-dedup shadow.
+        void OnCommandBufferBoundary() { m_lastBindValid = false; }
+        // A ProgramFactory eviction just destroyed this layout: purge every frame
+        // slot's cached descriptor sets for it, so a recycled handle value can never
+        // stale-hit sets written for the dead layout's bindings. The sets are
+        // vkFreeDescriptorSets'd back to their pools (created with
+        // FREE_DESCRIPTOR_SET_BIT) and the pool accounting is credited, so program
+        // churn recycles pool capacity instead of abandoning it. GPU-safe: the layout
+        // only dies after >1024 idle frame boundaries, so no in-flight command buffer
+        // references its sets. This is the only PER-LAYOUT eviction path for the
+        // caches - a live layout's entry must never be purged on its own (its sets would be
+        // unreachable pool slots), so there is deliberately no age-based sweep here. The
+        // other path, TrimFrameDescriptorPools, drops a slot's whole cache together with
+        // the pools behind it.
+        void OnDescriptorSetLayoutDestroyed(VkDescriptorSetLayout descriptorSetLayout);
+        // One record per visited CombinedImageSampler DESCRIPTOR (post fallback substitution,
+        // in binding order, and within a binding in array-element order): the resolved texture
+        // and effective sampler, as never-reused lifetime ids so a freed-and-reallocated object
+        // at the same heap address can only MISS a comparison, never false-hit it (same ABA
+        // rule as SamplerResolveMemo). An arrayed binding contributes one record per element -
+        // element granularity is required, or swapping the textures of two elements of the same
+        // array would leave the record list identical and the fast path would keep a stale set.
+        struct SampledBindingRecord {
+            Uint64 textureLifetimeId = 0;
+            Uint64 samplerLifetimeId = 0;
+        };
+        Bool CollectSampledTextures(const MG_State::GLState::ProgramObject& program,
+                                    const ProgramFactory::VkProgramObject& programObj,
+                                    Vector<MG_State::GLState::ITextureObject*>& outTextures,
+                                    Vector<SampledBindingRecord>* outBindingRecords = nullptr);
+        // Shadow-compare for the SetupDraw fast path: re-runs the CollectSampledTextures
+        // walk and reports whether every visited binding still resolves to the recorded
+        // (texture, effective sampler) pair. A texture bind generation bump alone (e.g. a
+        // redundant glBindSampler, which always bumps it) does not prove the sampled set
+        // moved; this walk does, without rebuilding the set or falling off the fast path.
+        Bool SampledBindingsUnchanged(const MG_State::GLState::ProgramObject& program,
+                                      const ProgramFactory::VkProgramObject& programObj,
+                                      const Vector<SampledBindingRecord>& previousRecords) const;
+        Bool CollectStorageImageTextures(const MG_State::GLState::ProgramObject& program,
+                                         const ProgramFactory::VkProgramObject& programObj,
+                                         Vector<MG_State::GLState::ITextureObject*>& outTextures) const;
+        Bool CollectSamplerImageFeedback(
+            const MG_State::GLState::ProgramObject& program,
+            const ProgramFactory::VkProgramObject& programObj,
+            Vector<SamplerImageFeedbackBinding>& outBindings) const;
+        static Bool SamplerOverlapsWritableImageSubresource(Int samplerBaseLevel, Int samplerMaxLevel,
+                                                             GLint imageLevel, GLenum imageAccess);
+        // samplerDescriptorsUnchangedHint: the caller (SetupDraw fast path) proved that
+        // every input of every combined-image-sampler resolution is unchanged since the
+        // previous draw's resolve - same (texture, sampler) per binding, texture params
+        // sum, sampling-resolution generation (sampler params + texture shape), image
+        // epochs AND per-resource layout values - so the per-binding cached
+        // VkDescriptorImageInfo may be reused without re-running the resolve chain.
+        Bool BindProgramUniformBuffers(VkCommandBuffer commandBuffer,
+                                       const MG_State::GLState::ProgramObject& program,
+                                       const ProgramFactory::VkProgramObject& programObj,
+                                       Uint32 frameIndex,
+                                       VkPipelineBindPoint bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                       const SamplerBindingOverride* samplerBindingOverride = nullptr,
+                                       Bool samplerDescriptorsUnchangedHint = false,
+                                       const Vector<SamplerBindingOverride>* samplerBindingOverrides = nullptr);
+
+        // Pure format-policy helper kept public for host regression tests. Formatted storage
+        // images use their shader qualifier; transformed float images use glBindImageTexture's
+        // format and never silently fall back to the backing image format.
+        static VkFormat ResolveStorageImageViewFormat(VkFormat reflectedFormat, GLenum bindingFormat,
+                                                      VkFormat resourceFormat, Bool useBindingFormat);
+
+        // True when the program reads at least one sampler and every one of them is bound to a
+        // texture whose GL level range is a single level. Such a sampler resolves to
+        // minLod = maxLod = 0 (see VkSamplerManager::GetOrCreateSampler), so an implicit-LOD sample
+        // and an explicit LOD 0 sample must read the same texel - which is what makes the
+        // ExplicitLod0Sampling SPIR-V rewrite safe to request. Deliberately conservative: it reads
+        // only GL state, so a texture that ends up single-level for another reason (one uploaded
+        // level under a wide level range) merely misses the rewrite.
+        static Bool ProgramSamplesOnlySingleLevelTextures(const MG_State::GLState::ProgramObject& program,
+                                                          const ProgramFactory::VkProgramObject& programObj);
+
+        // ---- per-frame descriptor pools ----------------------------------------------------
+        // Each frame slot owns a list of pools. The first is the base pool (non-update-after-bind,
+        // setsPerFrame sets) and is never destroyed while the manager lives; every later one was
+        // added by GrowFrameDescriptorPool when an allocation found no room. A pool serves one
+        // updateAfterBind flavour, because a set can only come from a pool created with the flag
+        // its layout was.
+        struct DescriptorPoolBucket {
+            VkDescriptorPool handle = VK_NULL_HANDLE;
+            Uint32 maxSets = 0;
+            Uint32 allocatedSets = 0;
+            Bool updateAfterBind = false;
+        };
+        // One pool's maxSets never exceeds this. It bounds one pool's driver memory: CreateDescriptorPool
+        // declares 8 descriptors of each of 6 types per set, so a 4096-set pool asks for 196,608
+        // descriptors - about 12 MiB at 64 bytes each on a driver that backs every declared one.
+        static constexpr Uint32 kMaxDescriptorPoolSets = 4096;
+        // The growth policy, pure so the host tests can drive it: the size of the next pool a slot
+        // adds for `updateAfterBind` layouts, given the slot's existing pools. Twice the LARGEST pool
+        // of that flavour, capped at kMaxDescriptorPoolSets; `initialMaxSets` when the slot has no
+        // pool of that flavour yet. So a frame that needs N sets adds O(log N) pools while N stays
+        // under the cap, and one more pool per kMaxDescriptorPoolSets sets beyond it. Taking the
+        // largest (not the first) pool is the point: the first same-flavour pool is the oldest,
+        // smallest one, and doubling IT made every grown pool the same size.
+        static Uint32 NextDescriptorPoolMaxSets(const Vector<DescriptorPoolBucket>& pools, Bool updateAfterBind,
+                                                Uint32 initialMaxSets);
+        // Trim policy (see TrimFrameDescriptorPools). A slot is "quiet" in an epoch whose peak set
+        // count times kDescriptorTrimHeadroom still fits its capacity; a slot that has been quiet for
+        // MOBILEGL_MAGMA_DESCRIPTOR_TRIM_FRAMES consecutive epochs, and holds at least
+        // kDescriptorTrimMinCapacity sets, is trimmed. The headroom is what keeps the trim from
+        // thrashing: geometric growth leaves a re-grown slot at least a third full (the pool a growth
+        // adds is at most twice the largest before it, so at most twice everything the slot held, and
+        // the epoch that grew it needed more than that), so the epoch that grew a slot is never quiet
+        // for it. The floor keeps a slot sized for ordinary
+        // frames from being trimmed at all - the trim exists to give back a burst.
+        static constexpr Uint32 kDescriptorTrimHeadroom = 4;
+        static constexpr Uint32 kDescriptorTrimMinCapacity = 1024;
+        // For tests (DescriptorPoolCensus.h): pools, capacity, cached sets and trims over every slot.
+        DescriptorPoolCensus GetDescriptorPoolCensus() const;
+
+    private:
+
+        // A cached descriptor set together with the pool it was allocated from, so a
+        // layout-destroyed purge can vkFreeDescriptorSets it back and credit the
+        // owning bucket's accounting.
+        struct CachedDescriptorSet {
+            VkDescriptorSet set = VK_NULL_HANDLE;
+            VkDescriptorPool pool = VK_NULL_HANDLE;
+        };
+
+        struct DescriptorSetCacheEntry {
+            Vector<CachedDescriptorSet> sets;
+            Uint32 cursor = 0;
+        };
+
+        // descriptorSetCacheByLayout is the per-frame set cache: BeginFrame rewinds every cursor, so
+        // a slot re-writes the sets it allocated in earlier frames instead of allocating new ones, and
+        // the cache only ever grows - except through TrimFrameDescriptorPools, which gives a slot's
+        // whole burst back at once (and OnDescriptorSetLayoutDestroyed, one dead layout at a time).
+        struct FrameResources {
+            Vector<DescriptorPoolBucket> descriptorPools;
+            UnorderedMap<VkDescriptorSetLayout, DescriptorSetCacheEntry> descriptorSetCacheByLayout;
+            Vector<VkBufferView> texelBufferViews;
+            Uint32 activeDescriptorPoolIndex = 0;
+            Uint32 allocatedSetsThisFrame = 0;
+            Uint32 peakAllocatedSetsThisFrame = 0;
+            // Sum of maxSets over descriptorPools, kept in step by Initialize, Grow and Trim.
+            Uint64 capacitySets = 0;
+            // Consecutive epochs (see NoteEndedEpochForTrim) that were quiet for THIS slot's capacity.
+            Uint32 quietEpochs = 0;
+        };
+
+        static Bool ResolveSamplerTexture(const MG_State::GLState::ProgramObject& program,
+                                   const ProgramFactory::VkProgramObject& programObj, Uint32 binding,
+                                   SharedPtr<MG_State::GLState::ITextureObject>& outTexture);
+        // Shared per-binding resolution for CollectSampledTextures and
+        // SampledBindingsUnchanged, so membership and comparison can never diverge:
+        // texture after the fallback substitution (may still be null when no fallback
+        // exists), effective sampler = unit override else the texture's own sampler.
+        // False = the binding is skipped (unbound with a non-2D fallback target).
+        // `element` indexes a sampler array inside the binding; see ResolveSamplerDescriptor.
+        Bool ResolveSampledBinding(const MG_State::GLState::ProgramObject& program,
+                                   const ProgramFactory::VkProgramObject& programObj, Uint32 binding, Uint32 element,
+                                   MG_State::GLState::ITextureObject*& outTexture,
+                                   const MG_State::GLState::SamplerObject*& outSampler) const;
+        // Raw-pointer variant for the per-draw sampled-texture walk (CollectSampledTextures):
+        // the bound texture stays alive through the draw via GL binding state, so callers that
+        // only need the pointer skip the SharedPtr copy's atomic refcount churn.
+        static MG_State::GLState::ITextureObject* ResolveSamplerTextureRaw(
+            const MG_State::GLState::ProgramObject& program,
+            const ProgramFactory::VkProgramObject& programObj, Uint32 binding, Uint32 element);
+        // `numericDomain` is the sampler's class, and it matters only for the multisample arm -
+        // see GetFallbackMultisampleTexture for why the single-sampled fallback can ignore it.
+        SharedPtr<MG_State::GLState::ITextureObject> GetFallbackTexture(
+            TextureTarget target, SamplerNumericDomain numericDomain) const;
+        // The multisample arm of GetFallbackTexture. One object per (target, numeric domain) and
+        // no upload path: a multisample image cannot be written by a transfer, so its texels stay
+        // undefined - which is what GL promises for a texelFetch on an incomplete multisample
+        // texture - and it cannot carry MUTABLE_FORMAT, so its format has to match the sampler's
+        // class outright rather than being reinterpreted at view time.
+        SharedPtr<MG_State::GLState::ITextureObject> GetFallbackMultisampleTexture(
+            TextureTarget target, SamplerNumericDomain numericDomain) const;
+        // ---- placeholders for UNBOUND image-backed descriptors -------------------------
+        // GL lets a program declare `samplerBuffer`, `imageBuffer` or `image2D` and bind nothing
+        // to the unit it names: the fetch is then undefined (GL 4.6 core 8.9 for an incomplete
+        // buffer texture, 8.26 for an image unit with no texture) - undefined VALUES, not a
+        // dropped draw. Vulkan has no unwritten descriptor, so something valid has to sit in the
+        // set or the whole draw or dispatch is lost, which is what these two build. Same shape as
+        // VkBufferManager::AcquireUnboundStorageDescriptor, one level up: per FORMAT rather than
+        // one shared object, because a descriptor whose format disagrees with the shader's
+        // declaration is invalid Vulkan even when nothing ever reads it.
+        //
+        // `declaredFormat` is the format the SHADER declared (VK_FORMAT_UNDEFINED for a sampled
+        // texel buffer, which never carries one, or for a formatless `writeonly` image);
+        // `numericDomain` decides the format when there is no declaration and is the fallback
+        // class when the device cannot use the declared one as a texel buffer.
+        VkBufferView AcquireUnboundTexelBufferView(VkFormat declaredFormat, SamplerNumericDomain numericDomain,
+                                                   Bool storage);
+        // A 1x1 (x1 layer, or 6 faces for a cube) texture of `format`, shaped for `target` so the
+        // view the descriptor gets has the view type the shader's image declaration demands.
+        // Null for a target with no single-sampled placeholder shape - multisample images, whose
+        // descriptor needs a multisample view that this cannot stand in for.
+        SharedPtr<MG_State::GLState::ITextureObject> GetUnboundStorageImageTexture(TextureTarget target,
+                                                                                    VkFormat format) const;
+        // The (target, format) pair a storage-image binding's placeholder is keyed by, resolved
+        // from reflection alone. False when the binding has no placeholder shape.
+        Bool ResolveUnboundStorageImagePlaceholder(const ProgramFactory::VkProgramObject& programObj, Uint32 binding,
+                                                   TextureTarget& outTarget, VkFormat& outFormat) const;
+        // `element` indexes a sampler ARRAY inside one binding; each element carries its own
+        // independently assigned GL texture unit, so it selects the texture, the sampler
+        // override and the fallback separately from its neighbours.
+        //
+        // trustUnchangedHint: reuse this binding's cached VkDescriptorImageInfo outright
+        // (see BindProgramUniformBuffers' samplerDescriptorsUnchangedHint for the proof
+        // obligations the caller carries). The cache is keyed by binding alone, so it is
+        // used ONLY for single-descriptor bindings - see m_samplerResolveMemo.
+        Bool ResolveSamplerDescriptor(VkCommandBuffer commandBuffer, const MG_State::GLState::ProgramObject& program,
+                                      const ProgramFactory::VkProgramObject& programObj, Uint32 binding,
+                                      Uint32 element, VkDescriptorImageInfo& outImageInfo,
+                                      Bool trustUnchangedHint = false) const;
+        Bool ResolveSamplerDescriptorOverride(const SamplerBindingOverride& samplerBindingOverride,
+                                              VkDescriptorImageInfo& outImageInfo) const;
+        Bool ResolveTexelBufferDescriptor(const MG_State::GLState::ProgramObject& program,
+                                          const ProgramFactory::VkProgramObject& programObj, Uint32 binding,
+                                          Uint32 frameIndex, VkBufferView& outBufferView);
+        // GLSL `imageBuffer`: the same VkBufferView descriptor as the sampled texel buffer above,
+        // but resolved from an IMAGE unit (glBindImageTexture) rather than a texture unit, and
+        // made GPU-resident-writable because the shader may store to it. No `element` parameter:
+        // an imageBuffer ARRAY is refused at program creation, so a binding is always one
+        // descriptor (see the array gate in RemapDescriptorBindingsForVulkan).
+        Bool ResolveStorageTexelBufferDescriptor(const MG_State::GLState::ProgramObject& program,
+                                                 const ProgramFactory::VkProgramObject& programObj, Uint32 binding,
+                                                 Uint32 frameIndex, VkBufferView& outBufferView);
+        // `element` indexes a block INSTANCE array's descriptors; it is 0 for every ordinary
+        // block. Each element resolves through its own GL storage block, and so its own GL
+        // binding point, buffer and glBindBufferRange window.
+        Bool ResolveStorageBufferDescriptor(const MG_State::GLState::ProgramObject& program,
+                                            const ProgramFactory::VkProgramObject& programObj, Uint32 binding,
+                                            Uint32 element, VkDescriptorBufferInfo& outBufferInfo) const;
+        // `element` indexes an image ARRAY inside one binding; each element carries its own
+        // independently assigned GL image unit.
+        Bool ResolveStorageImageDescriptor(VkCommandBuffer commandBuffer,
+                                           const MG_State::GLState::ProgramObject& program,
+                                           const ProgramFactory::VkProgramObject& programObj, Uint32 binding,
+                                           Uint32 element, VkDescriptorImageInfo& outImageInfo) const;
+        // Result of resolving a UBO binding: either a zero-copy direct bind to the app's resident
+        // VkBuffer (the GLES backend's approach - no per-draw copy) or the CPU payload to upload.
+        struct UboBindResult {
+            Bool directBindable = false;
+            VkBuffer buffer = VK_NULL_HANDLE;
+            VkDeviceSize range = 0;         // reflected block size; constant across draws (hashed)
+            VkDeviceSize dynamicOffset = 0; // block range start; moves per draw (NOT hashed)
+            const void* payload = nullptr;  // fallback UploadTransient path
+            VkDeviceSize payloadSize = 0;
+        };
+        Bool ResolveUniformBufferPayload(const MG_State::GLState::ProgramObject& program,
+                                         const ProgramFactory::VkProgramObject& programObj, Uint32 binding,
+                                         Uint32 arrayElement, UboBindResult& out) const;
+        // Shared resolution of one dynamic-UBO binding element into the
+        // (buffer, range, dynamicOffset) triple the descriptor consumes: direct
+        // bind, global-slice reuse, or transient upload. Used by the full walk
+        // and by the dynamic-offset-only rebind (see FastRebindMemo).
+        Bool ResolveDynamicUboDescriptor(const MG_State::GLState::ProgramObject& program,
+                                         const ProgramFactory::VkProgramObject& programObj, Uint32 binding,
+                                         Uint32 arrayElement, Uint32 frameIndex, VkBuffer& outBuffer,
+                                         VkDeviceSize& outRange, Uint32& outDynamicOffset);
+        // The vkCmdBindDescriptorSets tail shared by the full walk and the
+        // dynamic-offset-only rebind: skips the driver call when this exact
+        // binding is already live on the command buffer (see the bind-dedup
+        // shadow below), otherwise binds and refreshes the shadow.
+        void BindDescriptorSetDeduped(VkCommandBuffer commandBuffer, VkPipelineBindPoint bindPoint,
+                                      VkPipelineLayout pipelineLayout, VkDescriptorSet descriptorSet,
+                                      const Vector<Uint32>& dynamicOffsets);
+        Bool CreateDescriptorPool(Uint32 maxSets, Bool updateAfterBind, VkDescriptorPool& outPool) const;
+        Bool GrowFrameDescriptorPool(FrameResources& frame, Uint32 frameIndex, Bool updateAfterBind);
+        // An epoch is the stretch between two BeginFrame calls: one frame, or the part of one between
+        // two drains (VulkanRenderer::TryDrainFrameTransients). Called by BeginFrame with the epoch
+        // that just ended, it updates every slot's quiet count - a burst in any slot counts against
+        // all of them, so bursts that land in the other slots still hold a slot's trim off.
+        void NoteEndedEpochForTrim(Uint32 epochPeakSets);
+        // Gives a slot's whole descriptor burst back: clears its per-layout cache, destroys every
+        // grown pool and resets the base pool, so the slot re-grows geometrically from setsPerFrame.
+        // Whole-slot rather than per-set: vkFreeDescriptorSets fragments a pool and can never empty
+        // a grown one. Called only from BeginFrame, which runs only when no pending command buffer
+        // references the slot's sets:
+        //   - Present path (VulkanRenderer::Present, after WaitAndAcquireNextImage): the slot's
+        //     imageInFlightFence has been waited. That fence rides the slot's LAST submission - the
+        //     Present submit - and every mid-frame submission of the slot (FlushPendingCommands,
+        //     SplitOversizedRecording, readbacks) went to the same queue earlier, so the fence's
+        //     signal covers them (vkQueueSubmit's fence scope includes all earlier submissions).
+        //   - Drain path (VulkanRenderer::TryDrainFrameTransients): every submission has been
+        //     observed complete and no recording is open.
+        // Sets are per slot: a slot's sets are only ever bound into recordings made while it is the
+        // current slot, so trimming one slot never touches another slot's in-flight work.
+        void TrimFrameDescriptorPools(FrameResources& frame, Uint32 frameIndex);
+        // Drops every handle this class holds to a descriptor set outside the per-layout caches.
+        void InvalidateDescriptorSetMemos();
+        VkResult AllocateDescriptorSetsFromActivePool(
+            Uint32 frameIndex, const ProgramFactory::VkProgramObject& programObj, VkDescriptorSet& outDescriptorSet);
+        VkResult AcquireDescriptorSet(Uint32 frameIndex,
+                                      const ProgramFactory::VkProgramObject& programObj,
+                                      VkDescriptorSet& outDescriptorSet);
+
+        VkDevice m_device = VK_NULL_HANDLE;
+        VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
+        VkBufferManager* m_bufferManager = nullptr;
+        ProgramFactory* m_programFactory = nullptr;
+        Vector<FrameResources> m_frames;
+
+        VkDeviceSize m_minDynamicOffsetAlignment = 1;
+        Uint32 m_frameCount = 0;
+        Uint32 m_maxBindings = 0;
+        Uint32 m_setsPerFrame = 0;
+        Uint32 m_peakDescriptorSetsObserved = 0;
+        // MOBILEGL_MAGMA_DESCRIPTOR_TRIM_FRAMES, latched at Initialize (0 = never trim).
+        Uint32 m_trimQuietEpochs = 0;
+        // The slot whose epoch is open (the last one BeginFrame was called for); valid once
+        // m_epochOpen is set. Its peak is the ended epoch's peak at the next BeginFrame.
+        Uint32 m_epochSlot = 0;
+        Bool m_epochOpen = false;
+        Uint64 m_descriptorSlotTrims = 0;
+        VkTextureManager* m_textureManager = nullptr;
+        VkSamplerManager* m_samplerManager = nullptr;
+        mutable SharedPtr<MG_State::GLState::ITextureObject> m_fallbackTexture2D;
+        // Keyed by (arrayed, numeric domain); see GetFallbackMultisampleTexture. Lazily populated,
+        // never evicted - at most six tiny 1x1 images - and torn down with the manager.
+        mutable UnorderedMap<Uint32, SharedPtr<MG_State::GLState::ITextureObject>> m_fallbackMultisampleTextures;
+        // See AcquireUnboundTexelBufferView / GetUnboundStorageImageTexture. Both are lazily
+        // populated, never evicted (a program's declared formats are a fixed, tiny set) and torn
+        // down with the manager. The texel views are keyed by format AND by storage-vs-sampled
+        // because the two descriptor kinds demand different format FEATURES of the device, so one
+        // format can be usable for one and not the other. Deliberately NOT the per-frame
+        // texelBufferViews list: those are destroyed at every frame boundary, and these must
+        // outlive it or the placeholder would be rebuilt for every unbound binding every frame.
+        UnorderedMap<Uint64, VkBufferView> m_unboundTexelBufferViews;
+        mutable UnorderedMap<Uint64, SharedPtr<MG_State::GLState::ITextureObject>> m_unboundStorageImageTextures;
+
+        // Per-draw scratch buffers for BindProgramUniformBuffers: reused (clear keeps
+        // capacity) so the descriptor-write path stops allocating on every draw.
+        Vector<VkWriteDescriptorSet> m_writesScratch;
+        Vector<VkDescriptorBufferInfo> m_bufferInfosScratch;
+        Vector<VkDescriptorImageInfo> m_imageInfosScratch;
+        Vector<VkBufferView> m_texelBufferViewsScratch;
+        Vector<Uint32> m_dynamicOffsetsScratch;
+
+        // Descriptor-set reuse across recent draws (see BindProgramUniformBuffers).
+        // When a draw's resolved descriptor content is byte-identical to one memoized
+        // earlier, reuse that VkDescriptorSet and skip AcquireDescriptorSet +
+        // vkUpdateDescriptorSets - only the bind-time dynamic offsets differ. Four
+        // entries with round-robin replacement rather than one: draws alternating
+        // between two programs (MC's chunk<->entity ping-pong) would thrash a single
+        // slot into a full re-allocate+write every draw. Reset each frame in BeginFrame
+        // because the frame's descriptor sets are recycled there.
+        struct DescriptorReuseEntry {
+            Uint64 signature = 0;
+            VkDescriptorSet set = VK_NULL_HANDLE;
+            Bool valid = false;
+        };
+        static constexpr Uint32 kDescriptorReuseMemoSize = 4;
+        DescriptorReuseEntry m_descriptorReuseMemo[kDescriptorReuseMemoSize];
+        Uint32 m_descriptorReuseMemoNext = 0;
+
+        // Dynamic-offset-only rebind (see BindProgramUniformBuffers): records the
+        // descriptor set selected by the last cacheable full walk of a program
+        // whose active bindings are exactly one dynamic UBO (single descriptor)
+        // plus combined-image samplers. When the next call proves every sampler
+        // descriptor input unchanged (samplerDescriptorsUnchangedHint) and the
+        // UBO re-resolves to the SAME VkBuffer+range - only the dynamic offset
+        // moved, the per-draw glUniform case - the walk collapses to: resolve one
+        // offset, rebind the recorded set with new pDynamicOffsets (Vulkan allows
+        // rebinding the same set with different dynamic offsets).
+        // Invalidation inventory: BeginFrame clears it (the frame's sets are
+        // recycled) and the frameIndex field guards cross-frame confusion on top;
+        // OnDescriptorSetLayoutDestroyed clears it (the set may be freed); a
+        // sampler-override walk clears it (mirrors m_descriptorReuseMemo); a
+        // program relink bumps the backend state version and thus programObj.hash
+        // so the key misses; the program lifetime id is never reused, so a
+        // deleted-and-recreated program misses; a texture/sampler/binding change
+        // drops the hint upstream; an arena wrap or growth resolves a different
+        // VkBuffer and misses. AcquireDescriptorSet's per-frame cursor only
+        // advances, so the recorded set is never re-written within its frame.
+        struct FastRebindMemo {
+            Bool valid = false;
+            Uint32 frameIndex = 0;
+            Uint64 programLifetimeId = 0;
+            ProgramFactory::HashType programHash = 0;
+            Uint32 uboBinding = 0;
+            VkBuffer uboBuffer = VK_NULL_HANDLE;
+            VkDeviceSize uboRange = 0;
+            VkDescriptorSet set = VK_NULL_HANDLE;
+        };
+        FastRebindMemo m_fastRebindMemo;
+
+        // vkCmdBindDescriptorSets dedup: consecutive draws with a static uniform
+        // block resolve to the same set AND the same dynamic offsets, so the
+        // driver call can be skipped outright. Command-buffer-scope state; reset
+        // via OnCommandBufferBoundary whenever a recording (re)begins. Keyed on
+        // layout+bind point, so a pipeline-layout switch always rebinds.
+        static constexpr Uint32 kMaxShadowedDynamicOffsets = 8;
+        Bool m_lastBindValid = false;
+        VkDescriptorSet m_lastBindSet = VK_NULL_HANDLE;
+        VkPipelineLayout m_lastBindLayout = VK_NULL_HANDLE;
+        VkPipelineBindPoint m_lastBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        Uint32 m_lastBindOffsetCount = 0;
+        Uint32 m_lastBindOffsets[kMaxShadowedDynamicOffsets] = {};
+
+        // Global-UBO transient-slice reuse: MC leaves the default uniform block
+        // untouched across long GUI/terrain runs, so the per-draw re-upload of
+        // the same bytes can reuse the slice uploaded earlier THIS frame (frame
+        // serial guards arena recycling; the content version guards writes).
+        struct GlobalUboSliceMemo {
+            Uint64 programLifetimeId = 0;
+            Uint64 frameSerial = 0;
+            Uint32 uboContentVersion = 0;
+            VkBuffer buffer = VK_NULL_HANDLE;
+            VkDeviceSize offset = 0;
+            VkDeviceSize range = 0;
+        };
+        static constexpr Uint32 kGlobalUboMemoSize = 4;
+        GlobalUboSliceMemo m_globalUboMemo[kGlobalUboMemoSize];
+        Uint32 m_globalUboMemoNext = 0;
+
+        // Per-binding fast path over VkSamplerManager's content-hashed sampler cache, which
+        // stays the source of truth: its key hashes all sampler+texture state, so two distinct
+        // sampler objects with identical state still resolve to one VkSampler. This memo only
+        // skips recomputing that hash. Across a draw batch the bound sampler set is stable, so a
+        // binding whose sampler (lifetime id + version, bumped on every setter) and texture
+        // (lifetime id + params version, bumped on the format/border-color setters that feed the
+        // key) are unchanged recycles the VkSampler it resolved last draw; a param change bumps
+        // a version and forces a re-resolve. Both objects are keyed by a never-reused monotonic
+        // lifetime id, so a freed-and-reallocated sampler or texture at the same heap address
+        // always gets a fresh id and misses (a raw pointer would false-hit that ABA) - so a
+        // stale guess can only miss and fall through to the hash, never resolve wrong. Still
+        // reset each frame alongside the descriptor-set cache. Indexed by binding, but the
+        // whole-descriptor entry is additionally keyed by program lifetime: Vulkan binding
+        // numbers are layout-local and unrelated programs routinely reuse binding 0/1.
+        struct SamplerResolveMemo {
+            Uint64 infoProgramLifetimeId = 0;
+            Uint64 samplerLifetimeId = 0;
+            Uint64 textureLifetimeId = 0;
+            VkSampler sampler = VK_NULL_HANDLE;
+            Uint32 viewLevelCount = 0;
+            Uint16 samplerVersion = 0;
+            Uint16 textureParamsVersion = 0;
+            Bool forceNearestFiltering = false;
+            Bool valid = false;
+            // ResolveSampledImageViewFormat is pure in (image format, numeric domain), but a
+            // domain mismatch walks a ~184-entry format table. Memo the resolution per binding
+            // so a reinterpreted sampler pays that scan once, not once per draw.
+            VkFormat viewFormatSource = VK_FORMAT_UNDEFINED;
+            SamplerNumericDomain viewFormatDomain = SamplerNumericDomain::Unknown;
+            VkFormat viewFormat = VK_FORMAT_UNDEFINED;
+            Bool viewFormatValid = false;
+            // Whole resolved descriptor from this binding's last full resolve. Reused
+            // ONLY under ResolveSamplerDescriptor's trustUnchangedHint, whose caller
+            // proves every resolve input unchanged; cleared with the per-frame reset
+            // (the cached VkSampler outlives a frame only via a fresh resolve, which
+            // also re-stamps it against VkSamplerManager's frame-boundary sweep).
+            //
+            // This one field is keyed by binding but describes ONE descriptor, so it is
+            // written and read only for single-descriptor bindings. A sampler ARRAY's
+            // elements share the binding and would overwrite each other here - the last
+            // element resolved would then be handed to element 0 on the next hinted draw.
+            // Every other field above is self-validating (each compares its full key
+            // before reuse, and the view-format entry is a pure function of format and
+            // numeric domain), so an arrayed binding may keep using those.
+            VkDescriptorImageInfo info{};
+            Bool infoValid = false;
+        };
+        mutable Vector<SamplerResolveMemo> m_samplerResolveMemo;
+        // Exclusive upper bound on the entries of m_samplerResolveMemo that any resolve
+        // has ever written. The vector is sized to the DEVICE binding cap (256 on desktop
+        // NVIDIA), but a program declares 1-8 bindings, so the per-frame reset below was
+        // memsetting ~22 KB of never-touched entries every frame - a measurable slice of
+        // the per-frame fixed cost on draw-light frames. Every site that can turn any of
+        // an entry's *Valid flags on raises this mark first, so entries at or above it are
+        // provably still in their constructed (all-invalid) state and clearing them is a
+        // no-op. Never lowered except by Initialize/Shutdown, which rebuild the vector.
+        mutable Uint32 m_samplerResolveMemoHighWater = 0;
+        void NoteSamplerResolveMemoTouched(Uint32 binding) const {
+            if (binding >= m_samplerResolveMemoHighWater) {
+                m_samplerResolveMemoHighWater = binding + 1;
+            }
+        }
+    };
+} // namespace MobileGL::MG_Backend::DirectVulkan

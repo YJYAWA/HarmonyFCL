@@ -1,0 +1,42 @@
+*.o
+*.a
+*.so
+*.exe
+.cache/
+.vscode/
+.vs/
+tags
+TAGS
+bazel-*
+build/
+Test/localResults/
+External/googletest
+External/spirv-tools
+out/
+CMakeUserPresets.json
+
+# GN generated files
+.cipd/
+*.gclient_entries
+third_party/
+buildtools/
+tools/
+
+# Random OS stuff
+.DS_Store
+._*
+
+# ---------------------------------------------------------------------------
+# HarmonyFCL vendored 副本追加（上游原文到此为止）
+#
+# 上游把 External/spirv-tools 当子模块，所以上面第 14 行把它忽略了。但 MobileGL 的
+# CMakeLists.txt 明确 set(ENABLE_OPT ON) 并链接 SPIRV-Tools-opt / SPIRV-Tools，
+# 这份源码是**构建必需**的。不重新纳入的话，clone 本仓库拿到的是一个编不过的 glslang
+# —— 而且失败现场离这里很远（报找不到 SPIRV-Tools-opt 目标），很难查。
+#
+# 第二行是必需的：上面第 21~23 行的 third_party/、buildtools/、tools/ 都**没有前导斜杠**，
+# 在任意深度都匹配，会连带把 spirv-tools/ 自己的 tools/（48 个文件，其 CMakeLists.txt:352
+# 无条件 add_subdirectory(tools)）和 build_overrides/ 一起吞掉。
+# ---------------------------------------------------------------------------
+!External/spirv-tools
+!External/spirv-tools/**

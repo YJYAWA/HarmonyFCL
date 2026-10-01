@@ -1,0 +1,52 @@
+.clang_complete
+.ycm_extra_conf.py*
+*.pyc
+compile_commands.json
+/build*/
+/buildtools/
+/external/abseil_cpp/
+/external/googletest
+/external/SPIRV-Headers
+/external/spirv-headers
+/external/effcee
+/external/re2
+/external/protobuf
+/external/mimalloc
+/out
+/TAGS
+/third_party/llvm-build/
+/testing
+/tools/clang/
+/utils/clang-format-diff.py
+bazel-bin
+bazel-genfiles
+bazel-out
+bazel-spirv-tools
+bazel-SPIRV-Tools
+bazel-testlogs
+MODULE.bazel.lock
+
+# Vim
+[._]*.s[a-w][a-z]
+*~
+
+# C-Lion
+/.idea/
+/cmake-build-*/
+
+# VSCode
+/.vscode/*
+
+# ---------------------------------------------------------------------------
+# HarmonyFCL vendored 副本追加（上游原文到此为止）
+#
+# 上游把 external/spirv-headers 当子模块，所以上面第 9、10 行忽略了它。它是
+# SPIRV-Tools 的编译期依赖（生成的 SPIRV 头文件），构建必需，这里重新纳入。
+# 父目录 glslang/.gitignore 也把它整棵排除了，那边另有一条放行，两处都要有才有效。
+# ---------------------------------------------------------------------------
+!/external/spirv-headers
+
+# 上面第 5 行的 `/build*/` 本意是忽略构建目录，但会连带匹配 build_overrides/ ——
+# 那是上游跟踪的源码（3 个 .gni，GN 构建系统用；本 fork 用 CMake，构建不需要它，
+# 但既然是源码就一并保留）。
+!/build_overrides/
