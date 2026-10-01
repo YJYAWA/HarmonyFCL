@@ -28,12 +28,14 @@ import com.tungsten.fclcore.mod.LocalModFile;
 import com.tungsten.fclcore.mod.ModLoaderType;
 import com.tungsten.fclcore.mod.RemoteMod;
 import com.tungsten.fclcore.mod.RemoteModCache;
+import com.tungsten.fclcore.mod.RemoteModHttp;
 import com.tungsten.fclcore.mod.RemoteModRepository;
 import com.tungsten.fclcore.util.DigestUtils;
 import com.tungsten.fclcore.util.Lang;
 import com.tungsten.fclcore.util.StringUtils;
 import com.tungsten.fclcore.util.gson.JsonUtils;
 import com.tungsten.fclcore.util.io.HttpRequest;
+import com.tungsten.fclcore.util.io.HttpRequestCandidates;
 import com.tungsten.fclcore.util.io.NetworkUtils;
 import com.tungsten.fclcore.util.io.ResponseCodeException;
 
@@ -136,7 +138,9 @@ public final class ModrinthRemoteModRepository implements RemoteModRepository {
         ProjectVersion mod = RemoteModCache.getOrFetch("mr:sha1:" + sha1, RemoteModCache.TTL_PERMANENT,
                 ProjectVersion.class, () -> {
                     try {
-                        return HttpRequest.GET(PREFIX + "/v2/version_file/" + sha1,
+                        // 首选地址即可，不要兜底候选：下面的 404 分支是"这个文件不在这"的
+                        // 定论，要走负缓存；候选回落会把异常吞掉去试下一个，等于废掉这个判定。
+                        return HttpRequest.GET(RemoteModHttp.preferred(PREFIX + "/v2/version_file/" + sha1).toString(),
                                         pair("algorithm", "sha1"))
                                 .getJson(ProjectVersion.class);
                     } catch (ResponseCodeException e) {
@@ -162,9 +166,11 @@ public final class ModrinthRemoteModRepository implements RemoteModRepository {
             return Collections.emptyMap();
         }
 
-        Map<String, BulkFiles> response = HttpRequest.POST(PREFIX + "/v2/version_files")
-                .json(mapOf(pair("hashes", sha1s), pair("algorithm", "sha1")))
-                .getJson(new TypeToken<Map<String, BulkFiles>>() {
+        Map<String, BulkFiles> response = HttpRequestCandidates.postJson(
+                RemoteModHttp.candidates(PREFIX + "/v2/version_files"),
+                HttpRequest::POST,
+                mapOf(pair("hashes", sha1s), pair("algorithm", "sha1")),
+                new TypeToken<Map<String, BulkFiles>>() {
                 }.getType());
 
         Map<String, ProjectVersionFile> result = new HashMap<>();
@@ -184,7 +190,9 @@ public final class ModrinthRemoteModRepository implements RemoteModRepository {
     public RemoteMod getModById(String id) throws IOException {
         String modId = StringUtils.removePrefix(id, "local-");
         Project project = RemoteModCache.getOrFetch("mr:mod:" + modId, RemoteModCache.TTL_DETAIL,
-                Project.class, () -> HttpRequest.GET(PREFIX + "/v2/project/" + modId).getJson(Project.class));
+                Project.class, () -> HttpRequestCandidates.getJson(
+                        RemoteModHttp.candidates(PREFIX + "/v2/project/" + modId),
+                        HttpRequest::GET, Project.class));
         return project.toMod();
     }
 
@@ -198,24 +206,22 @@ public final class ModrinthRemoteModRepository implements RemoteModRepository {
         String modId = StringUtils.removePrefix(id, "local-");
         List<ProjectVersion> versions = RemoteModCache.getOrFetch("mr:ver:" + modId, RemoteModCache.TTL_VERSIONS,
                 JsonUtils.listTypeOf(ProjectVersion.class).getType(),
-                () -> {
-                    List<ProjectVersion> list = HttpRequest.GET(PREFIX + "/v2/project/" + modId + "/version")
-                            .getJson(new TypeToken<List<ProjectVersion>>() {
-                            }.getType());
-                    return list;
-                });
+                () -> HttpRequestCandidates.getJson(
+                        RemoteModHttp.candidates(PREFIX + "/v2/project/" + modId + "/version"),
+                        HttpRequest::GET,
+                        new TypeToken<List<ProjectVersion>>() {
+                        }.getType()));
         return versions.stream().map(ProjectVersion::toVersion).flatMap(Lang::toStream);
     }
 
     public List<Category> getCategoriesImpl() throws IOException {
         List<Category> categories = RemoteModCache.getOrFetch("mr:cat:" + projectType, RemoteModCache.TTL_CATEGORIES,
                 JsonUtils.listTypeOf(Category.class).getType(),
-                () -> {
-                    List<Category> list = HttpRequest.GET(PREFIX + "/v2/tag/category")
-                            .getJson(new TypeToken<List<Category>>() {
-                            }.getType());
-                    return list;
-                });
+                () -> HttpRequestCandidates.getJson(
+                        RemoteModHttp.candidates(PREFIX + "/v2/tag/category"),
+                        HttpRequest::GET,
+                        new TypeToken<List<Category>>() {
+                        }.getType()));
         return categories.stream().filter(category -> category.projectType().equals(projectType)).collect(Collectors.toList());
     }
 

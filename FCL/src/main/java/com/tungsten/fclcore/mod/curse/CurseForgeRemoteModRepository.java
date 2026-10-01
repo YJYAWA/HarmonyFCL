@@ -28,12 +28,14 @@ import com.tungsten.fclcore.download.DownloadProvider;
 import com.tungsten.fclcore.mod.LocalModFile;
 import com.tungsten.fclcore.mod.RemoteMod;
 import com.tungsten.fclcore.mod.RemoteModCache;
+import com.tungsten.fclcore.mod.RemoteModHttp;
 import com.tungsten.fclcore.mod.RemoteModRepository;
 import com.tungsten.fclcore.util.MurmurHash2;
 import com.tungsten.fclcore.util.Pair;
 import com.tungsten.fclcore.util.StringUtils;
 import com.tungsten.fclcore.util.gson.JsonUtils;
 import com.tungsten.fclcore.util.io.HttpRequest;
+import com.tungsten.fclcore.util.io.HttpRequestCandidates;
 import com.tungsten.fclcore.util.io.NetworkUtils;
 
 import org.jetbrains.annotations.Nullable;
@@ -66,7 +68,9 @@ public final class CurseForgeRemoteModRepository implements RemoteModRepository 
     private static final int WORD_PERFECT_MATCH_WEIGHT = 5;
 
     private static <R extends HttpRequest> R withApiKey(R request) {
-        if (request.getUrl().startsWith(PREFIX) && !apiKey.isEmpty()) {
+        // 别把字符串 "null" 当 key 发出去：官方构建的 curse_api_key 就是这个值，
+        // 发出去等于带着 X-API-KEY: null 请求，必然 403。判定口径与 isAvailable() 保持一致。
+        if (request.getUrl().startsWith(PREFIX) && !apiKey.isEmpty() && !apiKey.equals("null")) {
             request.header("X-API-KEY", apiKey);
         }
         return request;
@@ -74,6 +78,29 @@ public final class CurseForgeRemoteModRepository implements RemoteModRepository 
 
     public static boolean isAvailable() {
         return !apiKey.equals("null");
+    }
+
+    /**
+     * 候选地址依次尝试（国内镜像在前，见 `BMCLAPIDownloadProvider#injectURLWithCandidates`）。
+     *
+     * CurseForge 的 API 在国内直连基本不通，过去这些接口都把 `PREFIX` 写死直连，用户看到的
+     * 就是「搜得出来（搜索走的是镜像候选）、点进详情一直转圈」。
+     *
+     * key 只对原始地址有效：{@link #withApiKey} 判断的是 URL 以 `https://api.curseforge.com`
+     * 开头，镜像地址匹配不上 —— 而镜像那边自己配了 key（实测不带 key 请求
+     * `mod.mcimirror.top/curseforge/v1/mods/238222` 返回 200 与完整 JSON）。
+     */
+    // 形参这里必须写全限定名：本类实现了 RemoteModRepository，它内嵌的 Type 枚举会遮住
+    // java.lang.reflect.Type 这个简单名（本文件第 102 行的 `private final Type type` 就是那个枚举）。
+    // 写成 `Type` 的话这两个方法收的会是 RemoteModRepository.Type，调用处全部编译不过。
+    private static <T> T getJson(String url, java.lang.reflect.Type type) throws IOException {
+        return HttpRequestCandidates.getJson(RemoteModHttp.candidates(url),
+                candidate -> withApiKey(HttpRequest.GET(candidate)), type);
+    }
+
+    private static <T> T postJson(String url, Object body, java.lang.reflect.Type type) throws IOException {
+        return HttpRequestCandidates.postJson(RemoteModHttp.candidates(url),
+                candidate -> withApiKey(HttpRequest.POST(candidate)), body, type);
     }
 
     private final Type type;
@@ -289,9 +316,9 @@ public final class CurseForgeRemoteModRepository implements RemoteModRepository 
         // 指纹按文件内容寻址，命中结果与负结果（未命中）均永久缓存
         CurseAddon.LatestFile match = RemoteModCache.getOrFetch("cf:fp:" + hash, RemoteModCache.TTL_PERMANENT,
                 CurseAddon.LatestFile.class, () -> {
-                    Response<FingerprintMatchesResult> response = withApiKey(HttpRequest.POST(PREFIX + "/v1/fingerprints/432"))
-                            .json(mapOf(pair("fingerprints", Collections.singletonList(hash))))
-                            .getJson(new TypeToken<Response<FingerprintMatchesResult>>() {
+                    Response<FingerprintMatchesResult> response = postJson(PREFIX + "/v1/fingerprints/432",
+                            mapOf(pair("fingerprints", Collections.singletonList(hash))),
+                            new TypeToken<Response<FingerprintMatchesResult>>() {
                             }.getType());
 
                     if (response.data().exactMatches() == null || response.data().exactMatches().isEmpty()) {
@@ -318,9 +345,9 @@ public final class CurseForgeRemoteModRepository implements RemoteModRepository 
             return Collections.emptyMap();
         }
 
-        Response<FingerprintMatchesResult> response = withApiKey(HttpRequest.POST(PREFIX + "/v1/fingerprints/432"))
-                .json(mapOf(pair("fingerprints", hashes)))
-                .getJson(new TypeToken<Response<FingerprintMatchesResult>>() {
+        Response<FingerprintMatchesResult> response = postJson(PREFIX + "/v1/fingerprints/432",
+                mapOf(pair("fingerprints", hashes)),
+                new TypeToken<Response<FingerprintMatchesResult>>() {
                 }.getType());
 
         Map<Long, CurseAddon.LatestFile> result = new HashMap<>();
@@ -338,8 +365,8 @@ public final class CurseForgeRemoteModRepository implements RemoteModRepository 
     public RemoteMod getModById(String id) throws IOException {
         CurseAddon addon = RemoteModCache.getOrFetch("cf:mod:" + id, RemoteModCache.TTL_DETAIL,
                 CurseAddon.class, () -> {
-                    Response<CurseAddon> response = withApiKey(HttpRequest.GET(PREFIX + "/v1/mods/" + id))
-                            .getJson(new TypeToken<Response<CurseAddon>>() {
+                    Response<CurseAddon> response = getJson(PREFIX + "/v1/mods/" + id,
+                            new TypeToken<Response<CurseAddon>>() {
                             }.getType());
                     return response.data;
                 });
@@ -350,8 +377,9 @@ public final class CurseForgeRemoteModRepository implements RemoteModRepository 
     public RemoteMod.File getModFile(String modId, String fileId) throws IOException {
         CurseAddon.LatestFile file = RemoteModCache.getOrFetch("cf:file:" + modId + ":" + fileId, RemoteModCache.TTL_PERMANENT,
                 CurseAddon.LatestFile.class, () -> {
-                    Response<CurseAddon.LatestFile> response = withApiKey(HttpRequest.GET(String.format("%s/v1/mods/%s/files/%s", PREFIX, modId, fileId)))
-                            .getJson(new TypeToken<Response<CurseAddon.LatestFile>>() {
+                    Response<CurseAddon.LatestFile> response = getJson(
+                            String.format("%s/v1/mods/%s/files/%s", PREFIX, modId, fileId),
+                            new TypeToken<Response<CurseAddon.LatestFile>>() {
                             }.getType());
                     return response.data();
                 });
@@ -363,9 +391,9 @@ public final class CurseForgeRemoteModRepository implements RemoteModRepository 
         List<CurseAddon.LatestFile> files = RemoteModCache.getOrFetch("cf:ver:" + id, RemoteModCache.TTL_VERSIONS,
                 JsonUtils.listTypeOf(CurseAddon.LatestFile.class).getType(),
                 () -> {
-                    Response<List<CurseAddon.LatestFile>> response = withApiKey(HttpRequest.GET(PREFIX + "/v1/mods/" + id + "/files",
-                            pair("pageSize", "10000")))
-                            .getJson(new TypeToken<Response<List<CurseAddon.LatestFile>>>() {
+                    Response<List<CurseAddon.LatestFile>> response = getJson(
+                            NetworkUtils.withQuery(PREFIX + "/v1/mods/" + id + "/files", mapOf(pair("pageSize", "10000"))),
+                            new TypeToken<Response<List<CurseAddon.LatestFile>>>() {
                             }.getType());
                     return response.data();
                 });
@@ -377,8 +405,9 @@ public final class CurseForgeRemoteModRepository implements RemoteModRepository 
         return RemoteModCache.getOrFetch("cf:cat:" + section, RemoteModCache.TTL_CATEGORIES,
                 JsonUtils.listTypeOf(CurseAddon.Category.class).getType(),
                 () -> {
-                    Response<List<CurseAddon.Category>> response = withApiKey(HttpRequest.GET(PREFIX + "/v1/categories", pair("gameId", "432")))
-                            .getJson(new TypeToken<Response<List<CurseAddon.Category>>>() {
+                    Response<List<CurseAddon.Category>> response = getJson(
+                            NetworkUtils.withQuery(PREFIX + "/v1/categories", mapOf(pair("gameId", "432"))),
+                            new TypeToken<Response<List<CurseAddon.Category>>>() {
                             }.getType());
                     return response.data();
                 });

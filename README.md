@@ -31,22 +31,28 @@
 
 ## 本 fork 改了什么
 
-除了下面的九项，其余代码与上游 FoldCraftLauncher 一致。逐文件的改动见
+除了下面的十一项，其余代码与上游 FoldCraftLauncher 一致。逐文件的改动见
 [`patches/fcl-embed-mobileglues.patch`](patches/fcl-embed-mobileglues.patch)。
 MobileGL 那一侧的裁剪另有一份
 [`patches/mobilegl-no-vulkan.patch`](patches/mobilegl-no-vulkan.patch)（打在上游 MobileGL 上）。
 
-| # | 改动 | 说明 |
-| --- | --- | --- |
-| 1 | **内嵌 MobileGlues 与 MobileGL** | 两个 `.so` 都随 APK 分发，不再需要插件 APK；全局默认仍是 MobileGlues |
-| 2 | **源码级移除全部 Vulkan 调用路径** | 见 [它**不会**做什么](#它不会做什么) |
-| 3 | **新建版本的默认 JVM 参数改为 `-XX:+UnlockExperimentalVMOptions -XX:UseSVE=0`** | 见 [默认 JVM 参数](#默认-jvm-参数) |
-| 4 | **改包名与应用名**：`com.harmony.fcl` / **Harmony FCL** | 与官方 FCL 共存，数据目录独立 |
-| 5 | **`-Darch` 支持架构列表**（`arm64,arm` 这样写） | 方便一次出多个 ABI 的包 |
-| 6 | **按 MC 版本自动匹配渲染器** | < 1.17 → Krypton Wrapper；1.17~26.2 → MobileGlues；≥ 26.3 → MobileGL |
-| 7 | **每次打开启动器时做一次实例自检** | 见 [每次启动的实例自检](#每次启动的实例自检) |
-| 8 | **MC 26.2 起把图形后端钉死在 OpenGL** | 见 [MC 26.2 起的图形后端](#mc-262-起的图形后端) |
-| 9 | **MC 26.3 起换用 MobileGL** | 见 [MC 26.3 起的渲染器](#mc-263-起的渲染器) |
+「版本」一列是该项改动**首次进入本 fork 的版本**。两个版本的分界是同步上游 1.3.3.6 这件事：
+`1.3.3.5`（tag [`v.1.3.3.5`](https://github.com/YJYAWA/HarmonyFCL/releases/tag/v.1.3.3.5)）
+是内嵌 MobileGlues 的第一版，`1.3.3.6` 是当前版本（`versionCode` 1337）。
+
+| # | 改动 | 版本 | 说明 |
+| --- | --- | --- | --- |
+| 1 | **内嵌 MobileGlues 与 MobileGL** | 1.3.3.5 / 1.3.3.6 | 两个 `.so` 都随 APK 分发，不再需要插件 APK；全局默认仍是 MobileGlues。MobileGlues 自 1.3.3.5 起，MobileGL 自 1.3.3.6 起 |
+| 2 | **源码级移除全部 Vulkan 调用路径** | 1.3.3.5 | 见 [它**不会**做什么](#它不会做什么) |
+| 3 | **新建版本的默认 JVM 参数改为 `-XX:+UnlockExperimentalVMOptions -XX:UseSVE=0`** | 1.3.3.5 | 见 [默认 JVM 参数](#默认-jvm-参数) |
+| 4 | **改包名与应用名**：`com.harmony.fcl` / **Harmony FCL** | 1.3.3.5 | 与官方 FCL 共存，数据目录独立 |
+| 5 | **`-Darch` 支持架构列表**（`arm64,arm` 这样写） | 1.3.3.5 | 方便一次出多个 ABI 的包 |
+| 6 | **按 MC 版本自动匹配渲染器** | 1.3.3.6 | < 1.17 → Krypton Wrapper；1.17~26.2 → MobileGlues；≥ 26.3 → MobileGL |
+| 7 | **每次打开启动器时做一次实例自检** | 1.3.3.6 | 见 [每次启动的实例自检](#每次启动的实例自检) |
+| 8 | **MC 26.2 起把图形后端钉死在 OpenGL** | 1.3.3.6 | 见 [MC 26.2 起的图形后端](#mc-262-起的图形后端) |
+| 9 | **MC 26.3 起换用 MobileGL** | 1.3.3.6 | 见 [MC 26.3 起的渲染器](#mc-263-起的渲染器) |
+| 10 | **修复模组源（CurseForge / Modrinth）在国内的可用性** | 1.3.3.6 | 搜索之外的接口也走镜像；详情页不再一片空白。见[模组源的镜像](#模组源的镜像) |
+| 11 | **更换全部图标** | 1.3.3.6 | 桌面图标与应用内图标都换成镐子，和官方 FCL 区分开 |
 
 > 默认键位**没有**改动，用的就是 FCL 上游自带的 `Default` 布局，见[默认键位](#默认键位)。
 
@@ -66,8 +72,8 @@ MobileGL 那一侧的裁剪另有一份
 
 ## 默认 JVM 参数
 
-**这是本 fork 对 FCL 的第 3 项改动。** 新建版本时，「JVM 参数」这一栏的默认值从**空白**
-改成了：
+**这是本 fork 对 FCL 的第 3 项改动，1.3.3.5 起。** 新建版本时，「JVM 参数」这一栏的默认值从
+**空白**改成了：
 
 ```
 -XX:+UnlockExperimentalVMOptions -XX:UseSVE=0
@@ -97,7 +103,7 @@ MobileGL 那一侧的裁剪另有一份
 
 ## 每次启动的实例自检
 
-**这是本 fork 对 FCL 的第 6、7 项改动。** 每次打开启动器时，会在后台（不阻塞启动）对所有
+**这是本 fork 对 FCL 的第 6、7 项改动，1.3.3.6 起。** 每次打开启动器时，会在后台（不阻塞启动）对所有
 游戏实例扫一遍并修正。全过程幂等，**只改实例自己的设置，不动全局**。修正三件事：
 
 | 项 | 行为 |
@@ -122,7 +128,7 @@ MobileGL 的是 `26.3`；Krypton Wrapper 没有下界、MobileGlues 与 MobileGL
 
 ## MC 26.2 起的图形后端
 
-**这是本 fork 对 FCL 的第 8 项改动。** 26.2 起游戏会自己挑图形后端，可能选到 Vulkan——
+**这是本 fork 对 FCL 的第 8 项改动，1.3.3.6 起。** 26.2 起游戏会自己挑图形后端，可能选到 Vulkan——
 而麒麟 Maleoon 的 Vulkan 能力不足（这正是本项目「绝不调用 Vulkan」的由来），选到就是
 **黑屏或者直接退出**。
 
@@ -143,7 +149,7 @@ MobileGL 的是 `26.3`；Krypton Wrapper 没有下界、MobileGlues 与 MobileGL
 
 ## MC 26.3 起的渲染器
 
-**这是本 fork 对 FCL 的第 9 项改动。** 26.3 起 MC 的 **OpenGL 路径也改用 ShaderC 编译
+**这是本 fork 对 FCL 的第 9 项改动，1.3.3.6 起。** 26.3 起 MC 的 **OpenGL 路径也改用 ShaderC 编译
 shader**（与 Vulkan 同一套）。MobileGlues 是架在宿主 GLES 驱动之上的薄转译层，应用的桌面
 GLSL 会直接喂给宿主驱动，在这个区间表现为**过 Mojang logo 之后黑屏**；26.3 还引入了 OIT
 （34 个 `oit_*` shader）和 SDL3 窗口层，进一步加重。
@@ -177,6 +183,40 @@ shader 链路是 `GLSL → glslang → SPIR-V → SPIRV-Cross → ESSL`，**宿�
 >
 > 构建它需要 NDK `27.3.13750724` + C++23 + 全部 submodule——上游**不发预编译产物**
 > （Releases 与 Tags 都是空的），只能自己编，并接受 LGPL-3.0 的条款。
+
+## 模组源的镜像
+
+**这是本 fork 对 FCL 的第 10 项改动（1.3.3.6 起）。** 症状：在国内网络下打开「下载 → 模组」，
+**能搜出结果、能进详情页、宣传图也能显示，但「选择下载版本」那一片是空白**。
+（拿官方 FCL 试也是同样的症状——所以这不是本 fork 引入的。）
+
+原因是 `RemoteModRepository` 这个接口的设计：
+
+| 接口 | 有没有 `DownloadProvider` 参数 |
+| --- | --- |
+| `search(DownloadProvider, …)` | **有** → 搜索知道要去镜像 |
+| `getModById` / `getRemoteVersionsById` / `getCategories` | **没有** → 一律硬编码直连 `api.curseforge.com` / `api.modrinth.com` |
+
+也就是说**只有搜索**享受到了下载源里的镜像改写，详情、版本列表、分类全在撞墙；版本列表
+请求失败 → 页面收尾时布局又被恢复成"已加载"的样子 → 用户看到的就是那一片空白。
+本 fork 加了一个 `RemoteModHttp`，把启动器当前选定的 `DownloadProvider` 装进去
+（装载点是 `DownloadProviders.init()`），让那些没有参数可拿的接口也走同一套候选规则；
+同时修掉了失败路径上这个"把空列表渲染成正常页面"的收尾顺序。
+
+**只有 API 被墙，CDN 没有。** 这一点决定了镜像该怎么排：
+
+| 类别 | 地址 | 排序 | 为什么 |
+| --- | --- | --- | --- |
+| **API** | `api.modrinth.com`、`api.curseforge.com` | **镜像在前**，官方兜底 | 镜像（[MCIM](https://github.com/mcmod-info-mirror/mcim-rust-api)）是**真代理**，它替你把请求转出去。官方地址排前面的国内每次都要先吃一次超时 |
+| **文件 CDN** | `cdn.modrinth.com`、`edge.forgecdn.net` | **官方在前**，镜像兜底 | CDN 本身在国内是通的；镜像对文件请求只是 **302 回原站**，实测 `mod.mcimirror.top/files/9019/497/x.jar` 与 `edge.forgecdn.net/files/9019/497/x.jar` 的落点**完全相同**（都是 `mediafilez.forgecdn.net/files/9019/497/x.jar`）。排前面等于每次下载都白绕一跳 |
+
+顺带解决的一件事：**CurseForge 的浏览与下载不再需要 API key**。官方
+`api.curseforge.com` 无 key 是 403，而镜像无 key 直接给 200（搜索与文件列表都实测过）。
+仍需要 key 的只剩**整合包导出时反查远端文件**那一步（`CurseForgeRemoteModRepository.isAvailable()`
+只在那里被判断），没有 key 时导出会退化成"所有文件塞进 `overrides/`"，不影响游戏。
+
+> 非国内用户不受影响：`AutoDownloadProvider` 的候选链里 Mojang 排在 BMCLAPI 之前，
+> 那边给出的是原始地址，本来就先试；CDN 也是官方优先。
 
 ## 它**不会**做什么
 
@@ -280,8 +320,13 @@ MobileGL 在 [`third_party/MobileGL/`](third_party/MobileGL/)，构建命令见 
   `26.3-snapshot-1`，测试里的 `26_3 的快照排在正式版之前` 也要一并改。
 - `.so` 的页对齐是 4KB。与 FCL 上游自带的 `libgl4es_114.so` 等一致；若将来系统切到 16KB 页，
   需要给它们一起加 `-Wl,-z,max-page-size=16384` 重新构建。
-- `CurseForge` / `OAuth` 的 API key 拿不到，对应功能（整合包下载、微软登录）不可用。
-  要启用就在 `local.properties` 里填 `curse.api.key` / `oauth.api.key`。
+- **文件 CDN 没法镜像。** 镜像只代理 API；对文件请求它做的只是 302 回原站
+  （见[模组源的镜像](#模组源的镜像)），所以 `cdn.modrinth.com` / `edge.forgecdn.net`
+  要是真的不通，本 fork 也救不了——镜像留作兜底并不等于它能替你把字节取回来。
+- **CurseForge 的浏览与下载已不需要 API key**（走镜像），但**整合包导出**里"反查远端文件"
+  那一步仍要 key，没有时全部文件会落进 `overrides/`（不影响游戏）。**微软登录（OAuth）**
+  的 key 依旧拿不到，该功能不可用。要启用就在 `local.properties` 里填
+  `curse.api.key` / `oauth.api.key`。
 
 ## 许可证与致谢
 

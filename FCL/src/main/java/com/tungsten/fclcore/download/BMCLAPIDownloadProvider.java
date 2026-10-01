@@ -55,7 +55,8 @@ public final class BMCLAPIDownloadProvider implements DownloadProvider {
     private final QuiltVersionList quilt;
     private final QuiltAPIVersionList quiltApi;
     private final List<Pair<String, String>> replacement;
-    private final List<Pair<String, String>> fallbackReplacement;
+    private final List<Pair<String, String>> apiMirrorReplacement;
+    private final List<Pair<String, String>> cdnMirrorReplacement;
 
     public BMCLAPIDownloadProvider(String apiRoot) {
         this.apiRoot = apiRoot;
@@ -95,11 +96,22 @@ public final class BMCLAPIDownloadProvider implements DownloadProvider {
                 pair("https://zkitefly.github.io/unlisted-versions-of-minecraft", "https://alist.8mi.tech/d/mirror/unlisted-versions-of-minecraft/Auto")
         );
 
-        this.fallbackReplacement = Arrays.asList(
-                // https://github.com/mcmod-info-mirror/mcim-rust-api
+        // MCIM（https://github.com/mcmod-info-mirror/mcim-rust-api）是**接口镜像**：
+        // 这些 API 国内直连基本不通，镜像真的替你把请求转出去 —— 所以**镜像排前面**。
+        //
+        // 注意只放 API，别放 CDN。CDN 那两条曾一度也排在前面，实测是错的：
+        // `mod.mcimirror.top/files/9019/497/x.jar` 只是 302 到
+        // `https://mediafilez.forgecdn.net/files/9019/497/x.jar` —— 和原站
+        // `edge.forgecdn.net` 那条 302 的落点**一模一样**。也就是说镜像对文件请求
+        // 只是让你多走一跳、并不会替你把字节取回来；真撞墙时它也救不了。
+        // 所以 CDN 保持**原站优先**，镜像只作兜底（见 cdnMirrorReplacement）。
+        this.apiMirrorReplacement = Arrays.asList(
                 pair("https://api.modrinth.com", "https://mod.mcimirror.top/modrinth"),
+                pair("https://api.curseforge.com", "https://mod.mcimirror.top/curseforge")
+        );
+
+        this.cdnMirrorReplacement = Arrays.asList(
                 pair("https://cdn.modrinth.com", "https://mod.mcimirror.top"),
-                pair("https://api.curseforge.com", "https://mod.mcimirror.top/curseforge"),
                 pair("https://edge.forgecdn.net", "https://mod.mcimirror.top")
         );
     }
@@ -167,19 +179,36 @@ public final class BMCLAPIDownloadProvider implements DownloadProvider {
     @Override
     public List<URL> injectURLWithCandidates(String baseURL) {
         String injected = injectURL(replacement, baseURL);
-        if (injected.equals(baseURL)) {
-            String fallbackInjected = injectURL(fallbackReplacement, baseURL);
-            if (fallbackInjected.equals(baseURL)) {
-                return Collections.singletonList(NetworkUtils.toURL(baseURL));
-            } else {
-                return Arrays.asList(
-                        NetworkUtils.toURL(baseURL),
-                        NetworkUtils.toURL(fallbackInjected)
-                );
-            }
-        } else {
+        if (!injected.equals(baseURL)) {
+            // BMCLAPI 主规则命中：改写后的地址就是唯一候选
             return Collections.singletonList(NetworkUtils.toURL(injected));
         }
+
+        // 模组源 API：镜像真代理，**镜像排前面**。候选是「按顺序试、失败才换下一个」，
+        // 官方地址排前面的话国内每次请求都要先吃一次超时（山东等地直接 RST），
+        // 用户看到的就是「搜得出来，点进去转圈、版本列表空白」。
+        //
+        // 非国内用户不受影响：AutoDownloadProvider 的候选链里 Mojang 排在 BMCLAPI
+        // 之前，那边给出的是原始地址，本来就先试。
+        String apiInjected = injectURL(apiMirrorReplacement, baseURL);
+        if (!apiInjected.equals(baseURL)) {
+            return Arrays.asList(
+                    NetworkUtils.toURL(apiInjected),
+                    NetworkUtils.toURL(baseURL)
+            );
+        }
+
+        // 模组文件 CDN：镜像只是 302 回原站（落点与原站那条 302 完全相同），
+        // 排前面等于每次下载都白绕一跳。**原站优先**，镜像留作兜底。
+        String cdnInjected = injectURL(cdnMirrorReplacement, baseURL);
+        if (!cdnInjected.equals(baseURL)) {
+            return Arrays.asList(
+                    NetworkUtils.toURL(baseURL),
+                    NetworkUtils.toURL(cdnInjected)
+            );
+        }
+
+        return Collections.singletonList(NetworkUtils.toURL(baseURL));
     }
 
     @Override

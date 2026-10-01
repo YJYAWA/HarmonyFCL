@@ -31,6 +31,7 @@ import com.tungsten.fclcore.download.BMCLAPIDownloadProvider;
 import com.tungsten.fclcore.download.DownloadProvider;
 import com.tungsten.fclcore.download.DownloadProviderWrapper;
 import com.tungsten.fclcore.download.MojangDownloadProvider;
+import com.tungsten.fclcore.mod.RemoteModHttp;
 import com.tungsten.fclcore.task.DownloadException;
 import com.tungsten.fclcore.task.FetchTask;
 import com.tungsten.fclcore.util.StringUtils;
@@ -75,6 +76,12 @@ public final class DownloadProviders {
                 toDownloadSource(config().getVersionListSource()),
                 toDownloadSource(config().getFileDownloadSource()))),
                 config().versionListSourceProperty(), config().fileDownloadSourceProperty());
+
+        // 模组源（Modrinth / CurseForge）的详情、版本列表、分类这些接口在
+        // RemoteModRepository 里拿不到 DownloadProvider 参数，只能靠这个方法装进去 ——
+        // 不装的话它们会直连 api.modrinth.com / api.curseforge.com，国内基本不通。
+        // 装的是 Wrapper 而不是当前那个 provider：换下载源时 Wrapper 内部跟着换，这里不用重装。
+        RemoteModHttp.install(PROVIDER_WRAPPER);
     }
 
     private static DownloadSource toDownloadSource(String value) {

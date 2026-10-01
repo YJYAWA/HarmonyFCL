@@ -30,22 +30,55 @@ public class BMCLAPIDownloadProviderTest {
                 provider.injectURL("https://example.org/some/file.json"));
     }
 
+    /**
+     * 镜像必须排在官方地址前面。
+     *
+     * 候选是「按顺序试、失败才换下一个」，官方地址排前面的话国内每次请求都要先吃一次
+     * 超时（山东等地直接 RST）—— 用户看到的就是「搜得出来，点进详情转圈，版本列表空白」。
+     * 详情、版本列表、分类都走这条链，顺序错了这个修复就等于没做。
+     */
     @Test
-    public void modrinthCandidatesPreferOfficialThenMirror() {
-        List<URL> candidates = provider.injectURLWithCandidates("https://api.modrinth.com/v2/search?query=sodium");
+    public void modrinthCandidatesPreferMirrorThenOfficial() {
+        List<URL> candidates = provider.injectURLWithCandidates("https://api.modrinth.com/v2/project/sodium/version");
 
         assertEquals(2, candidates.size());
-        assertEquals("https://api.modrinth.com/v2/search?query=sodium", candidates.get(0).toString());
-        assertEquals("https://mod.mcimirror.top/modrinth/v2/search?query=sodium", candidates.get(1).toString());
+        assertEquals("https://mod.mcimirror.top/modrinth/v2/project/sodium/version", candidates.get(0).toString());
+        assertEquals("https://api.modrinth.com/v2/project/sodium/version", candidates.get(1).toString());
     }
 
     @Test
-    public void curseForgeCandidatesPreferOfficialThenMirror() {
-        List<URL> candidates = provider.injectURLWithCandidates("https://api.curseforge.com/v1/mods/search");
+    public void curseForgeCandidatesPreferMirrorThenOfficial() {
+        List<URL> candidates = provider.injectURLWithCandidates("https://api.curseforge.com/v1/mods/238222/files");
 
         assertEquals(2, candidates.size());
-        assertEquals("https://api.curseforge.com/v1/mods/search", candidates.get(0).toString());
-        assertEquals("https://mod.mcimirror.top/curseforge/v1/mods/search", candidates.get(1).toString());
+        assertEquals("https://mod.mcimirror.top/curseforge/v1/mods/238222/files", candidates.get(0).toString());
+        assertEquals("https://api.curseforge.com/v1/mods/238222/files", candidates.get(1).toString());
+    }
+
+    /**
+     * CDN 与 API 相反，**原站优先**。
+     *
+     * 镜像对文件请求只是 302 回原站，落点与原站那条 302 完全相同
+     * （实测 `mod.mcimirror.top/files/9019/497/x.jar` 与 `edge.forgecdn.net/files/9019/497/x.jar`
+     * 都定位到 `mediafilez.forgecdn.net/files/9019/497/x.jar`），所以把它排前面
+     * 等于每次下载都白绕一跳。镜像留在候选里只作兜底，不是主路径。
+     */
+    @Test
+    public void cdnCandidatesPreferOriginBecauseMirrorOnlyRedirects() {
+        List<URL> candidates = provider.injectURLWithCandidates("https://cdn.modrinth.com/data/AANobbMI/versions/x/sodium.jar");
+
+        assertEquals(2, candidates.size());
+        assertEquals("https://cdn.modrinth.com/data/AANobbMI/versions/x/sodium.jar", candidates.get(0).toString());
+        assertEquals("https://mod.mcimirror.top/data/AANobbMI/versions/x/sodium.jar", candidates.get(1).toString());
+    }
+
+    @Test
+    public void forgeCdnCandidatesAlsoPreferOrigin() {
+        List<URL> candidates = provider.injectURLWithCandidates("https://edge.forgecdn.net/files/9019/497/jei.jar");
+
+        assertEquals(2, candidates.size());
+        assertEquals("https://edge.forgecdn.net/files/9019/497/jei.jar", candidates.get(0).toString());
+        assertEquals("https://mod.mcimirror.top/files/9019/497/jei.jar", candidates.get(1).toString());
     }
 
     @Test

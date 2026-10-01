@@ -8,9 +8,14 @@
 
     git apply -p1 patches/fcl-embed-mobileglues.patch
 
-本补丁覆盖范围 = **源码与构建配置**：FCL/ 模块下的 Java/Kotlin/源码资源/Gradle 配置，
+本补丁覆盖范围 = **源码与构建配置**：FCL/ 模块下的 Java/Kotlin/测试/源码资源/Gradle 配置，
 加上 gradle.properties、settings.gradle.kts、gradle/wrapper/gradle-wrapper.properties、
-.gitignore、.gitattributes。
+.gitignore、.gitattributes。其中 `res/` 下的应用图标是二进制，以 `GIT binary patch`
+的形式内嵌在补丁里。
+
+另有 8 个上游文件被本 fork **删除**，补丁里以 `deleted file mode` 一并处理：
+`.github/` 下的 6 个 CI 配置（对 fork 无意义，且引用的是上游的构建流程）与
+`README_EN.md` / `README_RU.md`。
 
 刻意**不含**以下内容（都在仓库里以别的方式提供）：
 
@@ -34,21 +39,29 @@
 本仓库是以**单个压缩提交**发布的，与上游没有共同祖先，所以没法用 git merge，
 只能把上游的增量逐文件套用。补丁本身因此也要跟着重算：
 
-  1. **还原旧基线的原文**：把本补丁用 patch -R -p1 反推到本仓库当前版本的对应文件上，
-     得到本补丁所声明基线（tag 1.3.3.6）的上游原文
-  2. **叠加到新基线**：把上游在「旧基线 → 新基线」区间的 diff 应用到第 1 步的结果上
-  3. **重出补丁**：用 diff -u 加 --label a/<路径> --label b/<路径> 逐个比对新基线原文与
-     本仓库当前文件，前面补一行 diff --git a/<路径> b/<路径>（新增文件再加
-     new file mode 100644）拼起来
+  1. **取上游原文** —— 直接下该 tag 的源码包，不用再去反推旧基线：
 
-第 2 步那个区间 diff 的取法（本机 git fetch 走不通，只能走 API）：
+         curl -sS --ssl-no-revoke --retry 5 --retry-all-errors -C - -o fcl.tgz \
+           https://codeload.github.com/FCL-Team/FoldCraftLauncher/tar.gz/refs/tags/<版本>
 
-    https://api.github.com/repos/FCL-Team/FoldCraftLauncher/compare/<旧>...refs/tags/<新>
+     **`--ssl-no-revoke` 不能省**：本机有 TLS 中间人代理，schannel 的证书吊销检查会报
+     CRYPT_E_NO_REVOCATION_CHECK（`git fetch` 同样因此报 invalid index-pack output）。
+     包里是完整源码树，约 370MB。
+  2. **逐文件比对**：两侧都归一化成 LF，用
+     `diff -u --label a/<路径> --label b/<路径>` 出文本补丁，前面补一行
+     `diff --git a/<路径> b/<路径>`；新增文件加 `new file mode 100644`、删除文件加
+     `deleted file mode 100644`。二进制（图标）用 `git diff --binary` 出
+     `GIT binary patch`，并把段尾那份**反向数据剪掉** —— git 默认正反各写一份，
+     而 img_app.png 是 342KB→17KB，反向那份白白多出 342KB base64。
+  3. **验证**：把补丁涉及的文件从上游树复制到干净目录，`git init` + 提交，
+     然后 `git apply --check`、`git apply`，最后逐个路径比 **blob 哈希**
+     （`git ls-files -s`）。只有 blob 哈希全等才算通过。
 
-生成的补丁必须验证：在干净的上游检出上 git apply --check 通过，且应用后与仓库内容一致。
-注意**本仓库里连 blob 都是 CRLF**（这条容易被 .gitattributes 里的 `* text=auto` 误导 ——
-实测归一化并没有发生，初始提交起就是 CRLF），上游原文与 ref/ 也都是 CRLF。
-比对前先把两侧都归一化成 LF，否则会因为行尾差异全线报不一致。
+关于行尾，有个容易搞反的地方：`.gitattributes` 里是 `* text=auto`，所以
+**仓库里存的 blob 是 LF**，Windows 上检出到工作区的才是 CRLF；上游源码包同样是 LF。
+比对前先把两侧归一化成 LF，否则会因为行尾差异全线报不一致。也正因为如此，
+判「应用结果与仓库是否一致」要看 **blob 哈希**，直接比磁盘字节会被行尾差异淹没
+（工作区是 CRLF、临时检出是 LF，两者内容其实相同）。
 
 
 diff --git a/.gitattributes b/.gitattributes
@@ -567,6 +580,30 @@ diff --git a/FCL/src/main/java/com/tungsten/fcl/setting/Controllers.java b/FCL/s
                      Logging.LOG.log(Level.SEVERE, "Failed to generate default controller!", e.getMessage());
                  }
                  controllers.addAll(getControllersFromDisk());
+diff --git a/FCL/src/main/java/com/tungsten/fcl/setting/DownloadProviders.java b/FCL/src/main/java/com/tungsten/fcl/setting/DownloadProviders.java
+--- a/FCL/src/main/java/com/tungsten/fcl/setting/DownloadProviders.java
++++ b/FCL/src/main/java/com/tungsten/fcl/setting/DownloadProviders.java
+@@ -31,6 +31,7 @@
+ import com.tungsten.fclcore.download.DownloadProvider;
+ import com.tungsten.fclcore.download.DownloadProviderWrapper;
+ import com.tungsten.fclcore.download.MojangDownloadProvider;
++import com.tungsten.fclcore.mod.RemoteModHttp;
+ import com.tungsten.fclcore.task.DownloadException;
+ import com.tungsten.fclcore.task.FetchTask;
+ import com.tungsten.fclcore.util.StringUtils;
+@@ -75,6 +76,12 @@
+                 toDownloadSource(config().getVersionListSource()),
+                 toDownloadSource(config().getFileDownloadSource()))),
+                 config().versionListSourceProperty(), config().fileDownloadSourceProperty());
++
++        // 模组源（Modrinth / CurseForge）的详情、版本列表、分类这些接口在
++        // RemoteModRepository 里拿不到 DownloadProvider 参数，只能靠这个方法装进去 ——
++        // 不装的话它们会直连 api.modrinth.com / api.curseforge.com，国内基本不通。
++        // 装的是 Wrapper 而不是当前那个 provider：换下载源时 Wrapper 内部跟着换，这里不用重装。
++        RemoteModHttp.install(PROVIDER_WRAPPER);
+     }
+ 
+     private static DownloadSource toDownloadSource(String value) {
 diff --git a/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt b/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt
 --- a/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt
 +++ b/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt
@@ -635,6 +672,26 @@ diff --git a/FCL/src/main/java/com/tungsten/fcl/setting/VersionSetting.kt b/FCL/
                  vs.isNotCheckMod = json["notCheckMod"]?.asBoolean ?: false
                  vs.isDebugLog = json["debugLog"]?.asBoolean ?: false
                  vs.isForceResolution = json["forceResolution"]?.asBoolean ?: false
+diff --git a/FCL/src/main/java/com/tungsten/fcl/ui/download/common/RemoteModInfoPage.java b/FCL/src/main/java/com/tungsten/fcl/ui/download/common/RemoteModInfoPage.java
+--- a/FCL/src/main/java/com/tungsten/fcl/ui/download/common/RemoteModInfoPage.java
++++ b/FCL/src/main/java/com/tungsten/fcl/ui/download/common/RemoteModInfoPage.java
+@@ -169,10 +169,15 @@
+                         this.allVersions = result;
+                         reloadVersions();
+                         checkInstalled();
++                        // 只在成功时收尾：setLoading(false) 会把 layout 置为 VISIBLE，
++                        // 失败后再调它会把 setFailed() 藏起来的空布局又显示出来 ——
++                        // 用户看到的就是「详情页能打开、图像也在，但版本列表一片空白」，
++                        // 连重试按钮都因为布局恢复而显得莫名其妙。失败路径由 setFailed()
++                        // 自己负责收掉进度条。
++                        setLoading(false);
+                     } else {
+                         setFailed();
+                     }
+-                    setLoading(false);
+                 }).start();
+     }
+ 
 diff --git a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
 --- a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
 +++ b/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java
@@ -666,6 +723,93 @@ diff --git a/FCL/src/main/java/com/tungsten/fclauncher/FCLauncher.java b/FCL/src
          } else {
              envMap.put("MESA_GLSL_CACHE_DIR", config.getContext().getCacheDir().getAbsolutePath());
              envMap.put("MESA_GL_VERSION_OVERRIDE", renderer.isEqual(Renderer.ID_VIRGL) ? "4.3" : "4.6");
+diff --git a/FCL/src/main/java/com/tungsten/fclcore/download/BMCLAPIDownloadProvider.java b/FCL/src/main/java/com/tungsten/fclcore/download/BMCLAPIDownloadProvider.java
+--- a/FCL/src/main/java/com/tungsten/fclcore/download/BMCLAPIDownloadProvider.java
++++ b/FCL/src/main/java/com/tungsten/fclcore/download/BMCLAPIDownloadProvider.java
+@@ -55,7 +55,8 @@
+     private final QuiltVersionList quilt;
+     private final QuiltAPIVersionList quiltApi;
+     private final List<Pair<String, String>> replacement;
+-    private final List<Pair<String, String>> fallbackReplacement;
++    private final List<Pair<String, String>> apiMirrorReplacement;
++    private final List<Pair<String, String>> cdnMirrorReplacement;
+ 
+     public BMCLAPIDownloadProvider(String apiRoot) {
+         this.apiRoot = apiRoot;
+@@ -95,11 +96,22 @@
+                 pair("https://zkitefly.github.io/unlisted-versions-of-minecraft", "https://alist.8mi.tech/d/mirror/unlisted-versions-of-minecraft/Auto")
+         );
+ 
+-        this.fallbackReplacement = Arrays.asList(
+-                // https://github.com/mcmod-info-mirror/mcim-rust-api
++        // MCIM（https://github.com/mcmod-info-mirror/mcim-rust-api）是**接口镜像**：
++        // 这些 API 国内直连基本不通，镜像真的替你把请求转出去 —— 所以**镜像排前面**。
++        //
++        // 注意只放 API，别放 CDN。CDN 那两条曾一度也排在前面，实测是错的：
++        // `mod.mcimirror.top/files/9019/497/x.jar` 只是 302 到
++        // `https://mediafilez.forgecdn.net/files/9019/497/x.jar` —— 和原站
++        // `edge.forgecdn.net` 那条 302 的落点**一模一样**。也就是说镜像对文件请求
++        // 只是让你多走一跳、并不会替你把字节取回来；真撞墙时它也救不了。
++        // 所以 CDN 保持**原站优先**，镜像只作兜底（见 cdnMirrorReplacement）。
++        this.apiMirrorReplacement = Arrays.asList(
+                 pair("https://api.modrinth.com", "https://mod.mcimirror.top/modrinth"),
++                pair("https://api.curseforge.com", "https://mod.mcimirror.top/curseforge")
++        );
++
++        this.cdnMirrorReplacement = Arrays.asList(
+                 pair("https://cdn.modrinth.com", "https://mod.mcimirror.top"),
+-                pair("https://api.curseforge.com", "https://mod.mcimirror.top/curseforge"),
+                 pair("https://edge.forgecdn.net", "https://mod.mcimirror.top")
+         );
+     }
+@@ -167,19 +179,36 @@
+     @Override
+     public List<URL> injectURLWithCandidates(String baseURL) {
+         String injected = injectURL(replacement, baseURL);
+-        if (injected.equals(baseURL)) {
+-            String fallbackInjected = injectURL(fallbackReplacement, baseURL);
+-            if (fallbackInjected.equals(baseURL)) {
+-                return Collections.singletonList(NetworkUtils.toURL(baseURL));
+-            } else {
+-                return Arrays.asList(
+-                        NetworkUtils.toURL(baseURL),
+-                        NetworkUtils.toURL(fallbackInjected)
+-                );
+-            }
+-        } else {
++        if (!injected.equals(baseURL)) {
++            // BMCLAPI 主规则命中：改写后的地址就是唯一候选
+             return Collections.singletonList(NetworkUtils.toURL(injected));
+         }
++
++        // 模组源 API：镜像真代理，**镜像排前面**。候选是「按顺序试、失败才换下一个」，
++        // 官方地址排前面的话国内每次请求都要先吃一次超时（山东等地直接 RST），
++        // 用户看到的就是「搜得出来，点进去转圈、版本列表空白」。
++        //
++        // 非国内用户不受影响：AutoDownloadProvider 的候选链里 Mojang 排在 BMCLAPI
++        // 之前，那边给出的是原始地址，本来就先试。
++        String apiInjected = injectURL(apiMirrorReplacement, baseURL);
++        if (!apiInjected.equals(baseURL)) {
++            return Arrays.asList(
++                    NetworkUtils.toURL(apiInjected),
++                    NetworkUtils.toURL(baseURL)
++            );
++        }
++
++        // 模组文件 CDN：镜像只是 302 回原站（落点与原站那条 302 完全相同），
++        // 排前面等于每次下载都白绕一跳。**原站优先**，镜像留作兜底。
++        String cdnInjected = injectURL(cdnMirrorReplacement, baseURL);
++        if (!cdnInjected.equals(baseURL)) {
++            return Arrays.asList(
++                    NetworkUtils.toURL(baseURL),
++                    NetworkUtils.toURL(cdnInjected)
++            );
++        }
++
++        return Collections.singletonList(NetworkUtils.toURL(baseURL));
+     }
+ 
+     @Override
 diff --git a/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java b/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java
 --- a/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java
 +++ b/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java
@@ -680,6 +824,229 @@ diff --git a/FCL/src/main/java/com/tungsten/fclcore/launch/DefaultLauncher.java 
  
          if (options.getMaxMemory() != null && options.getMaxMemory() > 0)
              res.addDefault("-Xmx", options.getMaxMemory() + "m");
+diff --git a/FCL/src/main/java/com/tungsten/fclcore/mod/curse/CurseForgeRemoteModRepository.java b/FCL/src/main/java/com/tungsten/fclcore/mod/curse/CurseForgeRemoteModRepository.java
+--- a/FCL/src/main/java/com/tungsten/fclcore/mod/curse/CurseForgeRemoteModRepository.java
++++ b/FCL/src/main/java/com/tungsten/fclcore/mod/curse/CurseForgeRemoteModRepository.java
+@@ -28,12 +28,14 @@
+ import com.tungsten.fclcore.mod.LocalModFile;
+ import com.tungsten.fclcore.mod.RemoteMod;
+ import com.tungsten.fclcore.mod.RemoteModCache;
++import com.tungsten.fclcore.mod.RemoteModHttp;
+ import com.tungsten.fclcore.mod.RemoteModRepository;
+ import com.tungsten.fclcore.util.MurmurHash2;
+ import com.tungsten.fclcore.util.Pair;
+ import com.tungsten.fclcore.util.StringUtils;
+ import com.tungsten.fclcore.util.gson.JsonUtils;
+ import com.tungsten.fclcore.util.io.HttpRequest;
++import com.tungsten.fclcore.util.io.HttpRequestCandidates;
+ import com.tungsten.fclcore.util.io.NetworkUtils;
+ 
+ import org.jetbrains.annotations.Nullable;
+@@ -66,7 +68,9 @@
+     private static final int WORD_PERFECT_MATCH_WEIGHT = 5;
+ 
+     private static <R extends HttpRequest> R withApiKey(R request) {
+-        if (request.getUrl().startsWith(PREFIX) && !apiKey.isEmpty()) {
++        // 别把字符串 "null" 当 key 发出去：官方构建的 curse_api_key 就是这个值，
++        // 发出去等于带着 X-API-KEY: null 请求，必然 403。判定口径与 isAvailable() 保持一致。
++        if (request.getUrl().startsWith(PREFIX) && !apiKey.isEmpty() && !apiKey.equals("null")) {
+             request.header("X-API-KEY", apiKey);
+         }
+         return request;
+@@ -76,6 +80,29 @@
+         return !apiKey.equals("null");
+     }
+ 
++    /**
++     * 候选地址依次尝试（国内镜像在前，见 `BMCLAPIDownloadProvider#injectURLWithCandidates`）。
++     *
++     * CurseForge 的 API 在国内直连基本不通，过去这些接口都把 `PREFIX` 写死直连，用户看到的
++     * 就是「搜得出来（搜索走的是镜像候选）、点进详情一直转圈」。
++     *
++     * key 只对原始地址有效：{@link #withApiKey} 判断的是 URL 以 `https://api.curseforge.com`
++     * 开头，镜像地址匹配不上 —— 而镜像那边自己配了 key（实测不带 key 请求
++     * `mod.mcimirror.top/curseforge/v1/mods/238222` 返回 200 与完整 JSON）。
++     */
++    // 形参这里必须写全限定名：本类实现了 RemoteModRepository，它内嵌的 Type 枚举会遮住
++    // java.lang.reflect.Type 这个简单名（本文件第 102 行的 `private final Type type` 就是那个枚举）。
++    // 写成 `Type` 的话这两个方法收的会是 RemoteModRepository.Type，调用处全部编译不过。
++    private static <T> T getJson(String url, java.lang.reflect.Type type) throws IOException {
++        return HttpRequestCandidates.getJson(RemoteModHttp.candidates(url),
++                candidate -> withApiKey(HttpRequest.GET(candidate)), type);
++    }
++
++    private static <T> T postJson(String url, Object body, java.lang.reflect.Type type) throws IOException {
++        return HttpRequestCandidates.postJson(RemoteModHttp.candidates(url),
++                candidate -> withApiKey(HttpRequest.POST(candidate)), body, type);
++    }
++
+     private final Type type;
+     private final int section;
+ 
+@@ -289,9 +316,9 @@
+         // 指纹按文件内容寻址，命中结果与负结果（未命中）均永久缓存
+         CurseAddon.LatestFile match = RemoteModCache.getOrFetch("cf:fp:" + hash, RemoteModCache.TTL_PERMANENT,
+                 CurseAddon.LatestFile.class, () -> {
+-                    Response<FingerprintMatchesResult> response = withApiKey(HttpRequest.POST(PREFIX + "/v1/fingerprints/432"))
+-                            .json(mapOf(pair("fingerprints", Collections.singletonList(hash))))
+-                            .getJson(new TypeToken<Response<FingerprintMatchesResult>>() {
++                    Response<FingerprintMatchesResult> response = postJson(PREFIX + "/v1/fingerprints/432",
++                            mapOf(pair("fingerprints", Collections.singletonList(hash))),
++                            new TypeToken<Response<FingerprintMatchesResult>>() {
+                             }.getType());
+ 
+                     if (response.data().exactMatches() == null || response.data().exactMatches().isEmpty()) {
+@@ -318,9 +345,9 @@
+             return Collections.emptyMap();
+         }
+ 
+-        Response<FingerprintMatchesResult> response = withApiKey(HttpRequest.POST(PREFIX + "/v1/fingerprints/432"))
+-                .json(mapOf(pair("fingerprints", hashes)))
+-                .getJson(new TypeToken<Response<FingerprintMatchesResult>>() {
++        Response<FingerprintMatchesResult> response = postJson(PREFIX + "/v1/fingerprints/432",
++                mapOf(pair("fingerprints", hashes)),
++                new TypeToken<Response<FingerprintMatchesResult>>() {
+                 }.getType());
+ 
+         Map<Long, CurseAddon.LatestFile> result = new HashMap<>();
+@@ -338,8 +365,8 @@
+     public RemoteMod getModById(String id) throws IOException {
+         CurseAddon addon = RemoteModCache.getOrFetch("cf:mod:" + id, RemoteModCache.TTL_DETAIL,
+                 CurseAddon.class, () -> {
+-                    Response<CurseAddon> response = withApiKey(HttpRequest.GET(PREFIX + "/v1/mods/" + id))
+-                            .getJson(new TypeToken<Response<CurseAddon>>() {
++                    Response<CurseAddon> response = getJson(PREFIX + "/v1/mods/" + id,
++                            new TypeToken<Response<CurseAddon>>() {
+                             }.getType());
+                     return response.data;
+                 });
+@@ -350,8 +377,9 @@
+     public RemoteMod.File getModFile(String modId, String fileId) throws IOException {
+         CurseAddon.LatestFile file = RemoteModCache.getOrFetch("cf:file:" + modId + ":" + fileId, RemoteModCache.TTL_PERMANENT,
+                 CurseAddon.LatestFile.class, () -> {
+-                    Response<CurseAddon.LatestFile> response = withApiKey(HttpRequest.GET(String.format("%s/v1/mods/%s/files/%s", PREFIX, modId, fileId)))
+-                            .getJson(new TypeToken<Response<CurseAddon.LatestFile>>() {
++                    Response<CurseAddon.LatestFile> response = getJson(
++                            String.format("%s/v1/mods/%s/files/%s", PREFIX, modId, fileId),
++                            new TypeToken<Response<CurseAddon.LatestFile>>() {
+                             }.getType());
+                     return response.data();
+                 });
+@@ -363,9 +391,9 @@
+         List<CurseAddon.LatestFile> files = RemoteModCache.getOrFetch("cf:ver:" + id, RemoteModCache.TTL_VERSIONS,
+                 JsonUtils.listTypeOf(CurseAddon.LatestFile.class).getType(),
+                 () -> {
+-                    Response<List<CurseAddon.LatestFile>> response = withApiKey(HttpRequest.GET(PREFIX + "/v1/mods/" + id + "/files",
+-                            pair("pageSize", "10000")))
+-                            .getJson(new TypeToken<Response<List<CurseAddon.LatestFile>>>() {
++                    Response<List<CurseAddon.LatestFile>> response = getJson(
++                            NetworkUtils.withQuery(PREFIX + "/v1/mods/" + id + "/files", mapOf(pair("pageSize", "10000"))),
++                            new TypeToken<Response<List<CurseAddon.LatestFile>>>() {
+                             }.getType());
+                     return response.data();
+                 });
+@@ -377,8 +405,9 @@
+         return RemoteModCache.getOrFetch("cf:cat:" + section, RemoteModCache.TTL_CATEGORIES,
+                 JsonUtils.listTypeOf(CurseAddon.Category.class).getType(),
+                 () -> {
+-                    Response<List<CurseAddon.Category>> response = withApiKey(HttpRequest.GET(PREFIX + "/v1/categories", pair("gameId", "432")))
+-                            .getJson(new TypeToken<Response<List<CurseAddon.Category>>>() {
++                    Response<List<CurseAddon.Category>> response = getJson(
++                            NetworkUtils.withQuery(PREFIX + "/v1/categories", mapOf(pair("gameId", "432"))),
++                            new TypeToken<Response<List<CurseAddon.Category>>>() {
+                             }.getType());
+                     return response.data();
+                 });
+diff --git a/FCL/src/main/java/com/tungsten/fclcore/mod/modrinth/ModrinthRemoteModRepository.java b/FCL/src/main/java/com/tungsten/fclcore/mod/modrinth/ModrinthRemoteModRepository.java
+--- a/FCL/src/main/java/com/tungsten/fclcore/mod/modrinth/ModrinthRemoteModRepository.java
++++ b/FCL/src/main/java/com/tungsten/fclcore/mod/modrinth/ModrinthRemoteModRepository.java
+@@ -28,12 +28,14 @@
+ import com.tungsten.fclcore.mod.ModLoaderType;
+ import com.tungsten.fclcore.mod.RemoteMod;
+ import com.tungsten.fclcore.mod.RemoteModCache;
++import com.tungsten.fclcore.mod.RemoteModHttp;
+ import com.tungsten.fclcore.mod.RemoteModRepository;
+ import com.tungsten.fclcore.util.DigestUtils;
+ import com.tungsten.fclcore.util.Lang;
+ import com.tungsten.fclcore.util.StringUtils;
+ import com.tungsten.fclcore.util.gson.JsonUtils;
+ import com.tungsten.fclcore.util.io.HttpRequest;
++import com.tungsten.fclcore.util.io.HttpRequestCandidates;
+ import com.tungsten.fclcore.util.io.NetworkUtils;
+ import com.tungsten.fclcore.util.io.ResponseCodeException;
+ 
+@@ -136,7 +138,9 @@
+         ProjectVersion mod = RemoteModCache.getOrFetch("mr:sha1:" + sha1, RemoteModCache.TTL_PERMANENT,
+                 ProjectVersion.class, () -> {
+                     try {
+-                        return HttpRequest.GET(PREFIX + "/v2/version_file/" + sha1,
++                        // 首选地址即可，不要兜底候选：下面的 404 分支是"这个文件不在这"的
++                        // 定论，要走负缓存；候选回落会把异常吞掉去试下一个，等于废掉这个判定。
++                        return HttpRequest.GET(RemoteModHttp.preferred(PREFIX + "/v2/version_file/" + sha1).toString(),
+                                         pair("algorithm", "sha1"))
+                                 .getJson(ProjectVersion.class);
+                     } catch (ResponseCodeException e) {
+@@ -162,9 +166,11 @@
+             return Collections.emptyMap();
+         }
+ 
+-        Map<String, BulkFiles> response = HttpRequest.POST(PREFIX + "/v2/version_files")
+-                .json(mapOf(pair("hashes", sha1s), pair("algorithm", "sha1")))
+-                .getJson(new TypeToken<Map<String, BulkFiles>>() {
++        Map<String, BulkFiles> response = HttpRequestCandidates.postJson(
++                RemoteModHttp.candidates(PREFIX + "/v2/version_files"),
++                HttpRequest::POST,
++                mapOf(pair("hashes", sha1s), pair("algorithm", "sha1")),
++                new TypeToken<Map<String, BulkFiles>>() {
+                 }.getType());
+ 
+         Map<String, ProjectVersionFile> result = new HashMap<>();
+@@ -184,7 +190,9 @@
+     public RemoteMod getModById(String id) throws IOException {
+         String modId = StringUtils.removePrefix(id, "local-");
+         Project project = RemoteModCache.getOrFetch("mr:mod:" + modId, RemoteModCache.TTL_DETAIL,
+-                Project.class, () -> HttpRequest.GET(PREFIX + "/v2/project/" + modId).getJson(Project.class));
++                Project.class, () -> HttpRequestCandidates.getJson(
++                        RemoteModHttp.candidates(PREFIX + "/v2/project/" + modId),
++                        HttpRequest::GET, Project.class));
+         return project.toMod();
+     }
+ 
+@@ -198,24 +206,22 @@
+         String modId = StringUtils.removePrefix(id, "local-");
+         List<ProjectVersion> versions = RemoteModCache.getOrFetch("mr:ver:" + modId, RemoteModCache.TTL_VERSIONS,
+                 JsonUtils.listTypeOf(ProjectVersion.class).getType(),
+-                () -> {
+-                    List<ProjectVersion> list = HttpRequest.GET(PREFIX + "/v2/project/" + modId + "/version")
+-                            .getJson(new TypeToken<List<ProjectVersion>>() {
+-                            }.getType());
+-                    return list;
+-                });
++                () -> HttpRequestCandidates.getJson(
++                        RemoteModHttp.candidates(PREFIX + "/v2/project/" + modId + "/version"),
++                        HttpRequest::GET,
++                        new TypeToken<List<ProjectVersion>>() {
++                        }.getType()));
+         return versions.stream().map(ProjectVersion::toVersion).flatMap(Lang::toStream);
+     }
+ 
+     public List<Category> getCategoriesImpl() throws IOException {
+         List<Category> categories = RemoteModCache.getOrFetch("mr:cat:" + projectType, RemoteModCache.TTL_CATEGORIES,
+                 JsonUtils.listTypeOf(Category.class).getType(),
+-                () -> {
+-                    List<Category> list = HttpRequest.GET(PREFIX + "/v2/tag/category")
+-                            .getJson(new TypeToken<List<Category>>() {
+-                            }.getType());
+-                    return list;
+-                });
++                () -> HttpRequestCandidates.getJson(
++                        RemoteModHttp.candidates(PREFIX + "/v2/tag/category"),
++                        HttpRequest::GET,
++                        new TypeToken<List<Category>>() {
++                        }.getType()));
+         return categories.stream().filter(category -> category.projectType().equals(projectType)).collect(Collectors.toList());
+     }
+ 
 diff --git a/FCL/src/main/res/values-vi/strings.xml b/FCL/src/main/res/values-vi/strings.xml
 --- a/FCL/src/main/res/values-vi/strings.xml
 +++ b/FCL/src/main/res/values-vi/strings.xml
@@ -773,6 +1140,73 @@ diff --git a/FCL/src/main/res/values/strings.xml b/FCL/src/main/res/values/strin
      <string name="crash_reporter_restart">Restart</string>
      <string name="crash_reporter_close">Exit</string>
      <string name="crash_reporter_copy">Copy</string>
+diff --git a/FCL/src/test/java/com/tungsten/fclcore/download/BMCLAPIDownloadProviderTest.java b/FCL/src/test/java/com/tungsten/fclcore/download/BMCLAPIDownloadProviderTest.java
+--- a/FCL/src/test/java/com/tungsten/fclcore/download/BMCLAPIDownloadProviderTest.java
++++ b/FCL/src/test/java/com/tungsten/fclcore/download/BMCLAPIDownloadProviderTest.java
+@@ -30,22 +30,55 @@
+                 provider.injectURL("https://example.org/some/file.json"));
+     }
+ 
++    /**
++     * 镜像必须排在官方地址前面。
++     *
++     * 候选是「按顺序试、失败才换下一个」，官方地址排前面的话国内每次请求都要先吃一次
++     * 超时（山东等地直接 RST）—— 用户看到的就是「搜得出来，点进详情转圈，版本列表空白」。
++     * 详情、版本列表、分类都走这条链，顺序错了这个修复就等于没做。
++     */
+     @Test
+-    public void modrinthCandidatesPreferOfficialThenMirror() {
+-        List<URL> candidates = provider.injectURLWithCandidates("https://api.modrinth.com/v2/search?query=sodium");
++    public void modrinthCandidatesPreferMirrorThenOfficial() {
++        List<URL> candidates = provider.injectURLWithCandidates("https://api.modrinth.com/v2/project/sodium/version");
+ 
+         assertEquals(2, candidates.size());
+-        assertEquals("https://api.modrinth.com/v2/search?query=sodium", candidates.get(0).toString());
+-        assertEquals("https://mod.mcimirror.top/modrinth/v2/search?query=sodium", candidates.get(1).toString());
++        assertEquals("https://mod.mcimirror.top/modrinth/v2/project/sodium/version", candidates.get(0).toString());
++        assertEquals("https://api.modrinth.com/v2/project/sodium/version", candidates.get(1).toString());
+     }
+ 
+     @Test
+-    public void curseForgeCandidatesPreferOfficialThenMirror() {
+-        List<URL> candidates = provider.injectURLWithCandidates("https://api.curseforge.com/v1/mods/search");
++    public void curseForgeCandidatesPreferMirrorThenOfficial() {
++        List<URL> candidates = provider.injectURLWithCandidates("https://api.curseforge.com/v1/mods/238222/files");
+ 
+         assertEquals(2, candidates.size());
+-        assertEquals("https://api.curseforge.com/v1/mods/search", candidates.get(0).toString());
+-        assertEquals("https://mod.mcimirror.top/curseforge/v1/mods/search", candidates.get(1).toString());
++        assertEquals("https://mod.mcimirror.top/curseforge/v1/mods/238222/files", candidates.get(0).toString());
++        assertEquals("https://api.curseforge.com/v1/mods/238222/files", candidates.get(1).toString());
++    }
++
++    /**
++     * CDN 与 API 相反，**原站优先**。
++     *
++     * 镜像对文件请求只是 302 回原站，落点与原站那条 302 完全相同
++     * （实测 `mod.mcimirror.top/files/9019/497/x.jar` 与 `edge.forgecdn.net/files/9019/497/x.jar`
++     * 都定位到 `mediafilez.forgecdn.net/files/9019/497/x.jar`），所以把它排前面
++     * 等于每次下载都白绕一跳。镜像留在候选里只作兜底，不是主路径。
++     */
++    @Test
++    public void cdnCandidatesPreferOriginBecauseMirrorOnlyRedirects() {
++        List<URL> candidates = provider.injectURLWithCandidates("https://cdn.modrinth.com/data/AANobbMI/versions/x/sodium.jar");
++
++        assertEquals(2, candidates.size());
++        assertEquals("https://cdn.modrinth.com/data/AANobbMI/versions/x/sodium.jar", candidates.get(0).toString());
++        assertEquals("https://mod.mcimirror.top/data/AANobbMI/versions/x/sodium.jar", candidates.get(1).toString());
++    }
++
++    @Test
++    public void forgeCdnCandidatesAlsoPreferOrigin() {
++        List<URL> candidates = provider.injectURLWithCandidates("https://edge.forgecdn.net/files/9019/497/jei.jar");
++
++        assertEquals(2, candidates.size());
++        assertEquals("https://edge.forgecdn.net/files/9019/497/jei.jar", candidates.get(0).toString());
++        assertEquals("https://mod.mcimirror.top/files/9019/497/jei.jar", candidates.get(1).toString());
+     }
+ 
+     @Test
 diff --git a/gradle.properties b/gradle.properties
 --- a/gradle.properties
 +++ b/gradle.properties
@@ -1198,6 +1632,192 @@ new file mode 100644
 +        return dir.getAbsolutePath();
 +    }
 +}
+diff --git a/FCL/src/main/java/com/tungsten/fclcore/mod/RemoteModHttp.java b/FCL/src/main/java/com/tungsten/fclcore/mod/RemoteModHttp.java
+new file mode 100644
+--- /dev/null
++++ b/FCL/src/main/java/com/tungsten/fclcore/mod/RemoteModHttp.java
+@@ -0,0 +1,81 @@
++/*
++ * Hello Minecraft! Launcher
++ * Copyright (C) 2021  huangyuhui <huanghongxun2008@126.com> and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++package com.tungsten.fclcore.mod;
++
++import com.tungsten.fclcore.download.DownloadProvider;
++import com.tungsten.fclcore.util.Logging;
++import com.tungsten.fclcore.util.io.NetworkUtils;
++
++import java.net.URL;
++import java.util.Collections;
++import java.util.List;
++import java.util.logging.Level;
++
++/**
++ * 模组源（Modrinth / CurseForge）请求的候选地址来源。
++ *
++ * 为什么需要这么一个东西：{@link RemoteModRepository} 里**只有 `search()` 带
++ * `DownloadProvider` 参数**，详情、版本列表、分类、指纹匹配这些接口都没有 —— 于是它们
++ * 过去一律把 `https://api.modrinth.com` / `https://api.curseforge.com` 写死直连。
++ * 这两家的 API 在国内大多不通，用户看到的就是「搜得出来，点进详情一直转圈，也就下不动」：
++ * 搜索走了镜像候选，其余全在撞墙。
++ *
++ * 这里把启动器选定的 [`DownloadProvider`] 装进来，让那些没有参数可拿的接口也能走同一套
++ * 镜像改写规则。候选顺序见
++ * {@link com.tungsten.fclcore.download.BMCLAPIDownloadProvider#injectURLWithCandidates}。
++ *
++ * 装载点是 {@code com.tungsten.fcl.setting.DownloadProviders#init()}（它本身就负责跟随
++ * 「下载源」设置切换 provider，装进去的是稳定的 Wrapper，设置变了也自动跟着变）。
++ */
++public final class RemoteModHttp {
++
++    private static volatile DownloadProvider provider;
++
++    private RemoteModHttp() {
++    }
++
++    public static void install(DownloadProvider downloadProvider) {
++        provider = downloadProvider;
++    }
++
++    /**
++     * 给出该 URL 的候选地址列表（国内镜像在前、原始地址兜底）。
++     *
++     * 没装 provider 时退回原始地址而不是抛异常 —— 模组浏览不该因为一个初始化顺序问题
++     * 整个用不了，但会打一条日志，免得这种静默退化没人发现。
++     */
++    public static List<URL> candidates(String url) {
++        DownloadProvider current = provider;
++        if (current == null) {
++            Logging.LOG.log(Level.WARNING, "下载源尚未初始化，模组请求将直连: " + url);
++            return Collections.singletonList(NetworkUtils.toURL(url));
++        }
++        return current.injectURLWithCandidates(url);
++    }
++
++    /**
++     * 只要首选地址，不给兜底。
++     *
++     * 给「404 是定论」的调用点用（按哈希反查本地文件那个）：那边的逻辑是收到 404 就
++     * 负缓存、不再追问，而候选回落会把异常吞掉、去试下一个地址，等于把这个判定废掉。
++     * 国内首选是镜像，镜像查不到就是查不到；国外首选就是原始地址，行为与改前一致。
++     */
++    public static URL preferred(String url) {
++        return candidates(url).get(0);
++    }
++}
+diff --git a/FCL/src/main/java/com/tungsten/fclcore/util/io/HttpRequestCandidates.java b/FCL/src/main/java/com/tungsten/fclcore/util/io/HttpRequestCandidates.java
+new file mode 100644
+--- /dev/null
++++ b/FCL/src/main/java/com/tungsten/fclcore/util/io/HttpRequestCandidates.java
+@@ -0,0 +1,95 @@
++/*
++ * Hello Minecraft! Launcher
++ * Copyright (C) 2021  huangyuhui <huanghongxun2008@126.com> and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++package com.tungsten.fclcore.util.io;
++
++import com.tungsten.fclcore.util.Logging;
++
++import java.io.IOException;
++import java.lang.reflect.Type;
++import java.net.MalformedURLException;
++import java.net.URL;
++import java.util.List;
++import java.util.logging.Level;
++
++/**
++ * 按候选地址依次尝试同一个请求，返回第一个成功的响应。
++ *
++ * 模组源（Modrinth / CurseForge）的 **API 与 CDN 在国内大多直连不通**，而下载源里已经
++ * 配好了镜像改写规则。所以这类请求不能把原始地址写死 —— 必须走
++ * {@link com.tungsten.fclcore.download.DownloadProvider#injectURLWithCandidates(String)}
++ * 给出的候选列表。顺序由 `BMCLAPIDownloadProvider` 决定：国内镜像在前、原始地址兜底。
++ *
++ * 拿不到候选的调用点（例如某个静态方法没有 DownloadProvider 可用）说明这条路径没接上
++ * 镜像，国内用户在那个功能上就是必失败的 —— 与其悄悄退回直连，不如把候选传进来。
++ */
++public final class HttpRequestCandidates {
++
++    private HttpRequestCandidates() {
++    }
++
++    /**
++     * 由候选地址构造请求。
++     *
++     * CurseForge 要借它给每个候选单独补 API key —— key 只在 URL 以
++     * `https://api.curseforge.com` 开头时才带得上，镜像地址是
++     * `https://mod.mcimirror.top/...`，由镜像自己配 key，不能再往上加。
++     */
++    @FunctionalInterface
++    public interface RequestFactory {
++        HttpRequest create(String url) throws MalformedURLException;
++    }
++
++    /** POST 专用：body 要设在 {@link HttpRequest.HttpPostRequest} 上，基类没有这个方法。 */
++    @FunctionalInterface
++    public interface PostRequestFactory {
++        HttpRequest.HttpPostRequest create(String url) throws MalformedURLException;
++    }
++
++    @FunctionalInterface
++    private interface Attempt<T> {
++        T run(String url) throws IOException;
++    }
++
++    public static <T> T getJson(List<URL> candidates, RequestFactory factory, Type type) throws IOException {
++        return tryAll(candidates, url -> factory.create(url).getJson(type));
++    }
++
++    public static <T> T postJson(List<URL> candidates, PostRequestFactory factory, Object body, Type type) throws IOException {
++        return tryAll(candidates, url -> factory.create(url).json(body).getJson(type));
++    }
++
++    /**
++     * 逐个候选尝试。全部失败时抛一个汇总异常，把每个候选自己的原因挂在 suppressed 上 ——
++     * 只留最后一个的话，"镜像 404 而原地址超时"这种情况就说不清了。
++     */
++    private static <T> T tryAll(List<URL> candidates, Attempt<T> attempt) throws IOException {
++        IOException failure = null;
++        for (URL candidate : candidates) {
++            try {
++                return attempt.run(candidate.toString());
++            } catch (IOException e) {
++                Logging.LOG.log(Level.WARNING, "请求失败，改试下一个地址: " + candidate, e);
++                if (failure == null) {
++                    failure = new IOException("所有候选地址都失败");
++                }
++                failure.addSuppressed(e);
++            }
++        }
++        throw failure != null ? failure : new IOException("没有可用的候选地址");
++    }
++}
 diff --git a/FCL/src/test/java/com/mio/autofix/InstanceAutoFixTest.kt b/FCL/src/test/java/com/mio/autofix/InstanceAutoFixTest.kt
 new file mode 100644
 --- /dev/null
@@ -1404,3 +2024,2117 @@ new file mode 100644
 +        }
 +    }
 +}
+diff --git a/FCL/src/test/java/com/tungsten/fclcore/util/io/HttpRequestCandidatesTest.java b/FCL/src/test/java/com/tungsten/fclcore/util/io/HttpRequestCandidatesTest.java
+new file mode 100644
+--- /dev/null
++++ b/FCL/src/test/java/com/tungsten/fclcore/util/io/HttpRequestCandidatesTest.java
+@@ -0,0 +1,113 @@
++package com.tungsten.fclcore.util.io;
++
++import static com.tungsten.fclcore.util.Lang.mapOf;
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertThrows;
++import static org.junit.Assert.assertTrue;
++
++import com.google.gson.reflect.TypeToken;
++
++import org.junit.Test;
++
++import java.io.IOException;
++import java.net.URL;
++import java.util.Arrays;
++import java.util.Collections;
++import java.util.List;
++import java.util.Map;
++import java.util.stream.Collectors;
++
++/**
++ * 候选回落本身的行为：第一个地址失败就换下一个，全部失败才算失败。
++ *
++ * 这是国内访问模组源的关键路径 —— 镜像排在前面，镜像不通时才回落官方地址。
++ *
++ * 用桩 {@link HttpRequest} 而不是真发请求：{@code NetworkUtils.createConnection} 会调用
++ * {@code FCLApp.getAppContext()}（见 NetworkUtils:118 设 User-Agent 那里），纯 JVM 单元
++ * 测试里没有 Android 上下文，任何真实请求都会先抛 NPE 再被 getStringWithRetry 包成
++ * IOException —— 那样测出来的「失败」跟被测逻辑毫无关系。真正打网络的用例在
++ * androidTest 的 NetworkUtilsDoGetTest 里。
++ */
++public class HttpRequestCandidatesTest {
++
++    private static final java.lang.reflect.Type MAP_TYPE =
++            new TypeToken<Map<String, String>>() {}.getType();
++
++    private static final String OK_BODY = "{\"value\":\"from-second-candidate\"}";
++
++    /** 镜像地址（首选）失败、官方地址（兜底）可用的桩。 */
++    private static final class StubGetRequest extends HttpRequest.HttpGetRequest {
++        private final boolean fail;
++
++        StubGetRequest(String url, boolean fail) {
++            super(url);
++            this.fail = fail;
++        }
++
++        @Override
++        public String getString() throws IOException {
++            if (fail) {
++                throw new IOException("模拟请求失败: " + url);
++            }
++            return OK_BODY;
++        }
++    }
++
++    private static List<URL> urls(String... values) {
++        return Arrays.stream(values).map(NetworkUtils::toURL).collect(Collectors.toList());
++    }
++
++    private static final String MIRROR = "https://mod.mcimirror.top/modrinth/v2/project/sodium/version";
++    private static final String OFFICIAL = "https://api.modrinth.com/v2/project/sodium/version";
++
++    /** 按 URL 决定成败的工厂：failMirror / failOfficial 指定哪几个地址失败。 */
++    private static HttpRequestCandidates.RequestFactory factory(boolean failMirror, boolean failOfficial) {
++        return url -> new StubGetRequest(url, url.equals(MIRROR) ? failMirror : failOfficial);
++    }
++
++    @Test
++    public void fallsBackToOfficialWhenMirrorFails() throws IOException {
++        Map<String, String> result = HttpRequestCandidates.getJson(
++                urls(MIRROR, OFFICIAL), factory(true, false), MAP_TYPE);
++
++        assertEquals("from-second-candidate", result.get("value"));
++    }
++
++    @Test
++    public void usesMirrorWithoutTouchingOfficialWhenItSucceeds() throws IOException {
++        // 官方地址被打成失败：若实现先去试了官方，这里就会抛异常而不是走到断言
++        Map<String, String> result = HttpRequestCandidates.getJson(
++                urls(MIRROR, OFFICIAL), factory(false, true), MAP_TYPE);
++
++        assertEquals("from-second-candidate", result.get("value"));
++    }
++
++    @Test
++    public void throwsWhenEveryCandidateFails() {
++        IOException thrown = assertThrows(IOException.class, () -> HttpRequestCandidates.getJson(
++                urls(MIRROR, OFFICIAL), factory(true, true), MAP_TYPE));
++
++        // 每个候选的失败都挂上去，日志里才看得出是哪一个环节出的问题
++        assertEquals(2, thrown.getSuppressed().length);
++    }
++
++    @Test
++    public void throwsWhenNoCandidateIsAvailable() {
++        IOException thrown = assertThrows(IOException.class, () -> HttpRequestCandidates.getJson(
++                Collections.emptyList(), factory(false, false), MAP_TYPE));
++
++        assertTrue(thrown.getMessage().contains("没有可用的候选地址"));
++    }
++
++    @Test
++    public void postJsonReportsMissingCandidates() {
++        // HttpPostRequest 是 final 的，没法像 GET 那样打桩；这里只覆盖「没有候选」这条
++        // 不构造请求的分支，POST 的回落循环与 GET 共用同一个 tryAll。
++        IOException thrown = assertThrows(IOException.class, () -> HttpRequestCandidates.postJson(
++                Collections.emptyList(), HttpRequest::POST,
++                mapOf(com.tungsten.fclcore.util.Pair.pair("hashes", Collections.singletonList("abc"))),
++                MAP_TYPE));
++
++        assertTrue(thrown.getMessage().contains("没有可用的候选地址"));
++    }
++}
+diff --git a/FCL/src/main/res/drawable/img_app.png b/FCL/src/main/res/drawable/img_app.png
+index d3c3f9c1363298ea359ab8acb37c25e27be8daa8..30377564975138c11579db93aed2b4f4d61b1c4e 100644
+GIT binary patch
+literal 17401
+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
+
+diff --git a/FCL/src/main/res/mipmap/ic_launcher.webp b/FCL/src/main/res/mipmap/ic_launcher.webp
+index c4b6364d8a6ff84d82c644cf0d6d6fd86f9a6cbf..46e29df9f4cfbc5d9ced607b9e9e77b8878b7307 100644
+GIT binary patch
+literal 2834
+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
+
+diff --git a/FCL/src/main/res/mipmap-mdpi/ic_launcher_foreground.webp b/FCL/src/main/res/mipmap-mdpi/ic_launcher_foreground.webp
+index 4a0ce27d7da955f7a57fc69a0c4ed39a5c88bca9..a29e49cf55ad47550c96d5ba8add69cce2f67ab3 100644
+GIT binary patch
+literal 1738
+zcmV;*1~vIoNk&G(1^@t8MM6+kP&iDs1^@srYrq;10j6yvNzyc}%0J<~rw1*K=>G)F
+zO#(H6loT};PfAe%(wIH1h>s253oK+IN^h=nfFzQwtVA(C1pTv-0DTT?rfnN*2+AL7
+zw8Lp6*{U@U)Ke%i|1g;O1#r~k5AM5P{ht8%VuYBKXk}KsfRUBe9}ONb!i?j`(U2kt
+zEycTbG5IFIpOKOBwp~EY$Oyog3?4uj14xNz3Hd_39rU;zJu}oC=onBV2>hmpj%;g-
+zB<FqKpIKGiGh$}&<jG>(f=syzEkG;4MKEkbOVA>~8&eF8`Tw8D{L+=4HSAYRLt29-
+z&xo14s;G__t{AkKF%==l+BQX2-tVueIy1OCndU@f77|*<7RXqJyM(p|cHp7AyW8|(
+zs_OscX#1x)$Tz?F?`#s>-QB6J)jQY`-~@0GIyeLs4`-mHqH?#*Wb)tt3J8k)A8i5v
+z@mmAlz3SovwP%6^fTR>c4I{<%OQDeqC}<S~fQW;QQm_;aNl8c$@&U0xsws!ox0&WN
+zQ-T2i0UR5n1RgwmdG#3y^ZcP_E}v`?6=2||Y>E#y<MEUC!A64fE&~yKS0IIj08$1K
+z25#V)dJsp~J4As9(#?TRvcL*LDj`t;caEOlx&Pvquu!#J9=&^y0F}IT;+-(*)Oj^c
+z<|NPMf5OlfNJ95J&o1$~PkqTK4$S^#Yy=C*#+~tm7$XsKCcOl*8YCG?N<34Sl(6}`
+ziJJV*gzpYdOo+nf#q``TK+dri0uxwF#yT=3P(VnY0c4q153IU+M_gvH*<%N8sr#QT
+z4sTq24lW7`3oxKhVjD$A`oCs|SQ6XtLtWpt^~5QSkdf2zC=BS$XqCo4P%IRN;Sx-N
+zl{APWfiVl}=#0=wi-Kr`1WeroB7liU<O)Mb!m*~uCB1HM2_j>Mq@^H%l`A~51R^k6
+zR|dv&g+dZUXeu#bv9+K~VA-zKT1Q1mhCYUi9(Hy~cExJ3;^MFZ6&}6IHwGqhI+xpa
+zDT4V#gxTvi;&&r;rKoG<oDUdXJSa+nkAo*Se<vhjc!DQ}<^@4M{_>4S255nzt*IoG
+zqRk`Rm8x4PqlDwrW@s2>AS~W0l->f(h(aL|WrMl!C>gjoPmn3b3)C`+ARVG$CItri
+zD}aP7P%jvenB009iCBfy6yq$Jcr-5jw?T&R*;3^0z5@aa8z`WTxk4B<*Jx&!2*(Q(
+z9U=eO8+=n#l}CX3<RkwdoyVxn8#f;GJHp*@aGz{$Hew=u=Gp$3wuNLEP2rtu@1+ny
+zp89rQHjLWHqwx>^M`d7TWC`AU_4cxznOHXpM6v-Gq-s>sn9W2r`(Y@ARml+?m3Tr!
+zW+I983_UTQcqD{V5E4j;Nfg)6fan{k!dT2`ASV<VDNq2K0Z3g{L_i!K^+{f{XTy;D
+z1+$GNG8<$H&*`Zm%-sB6_RO7|;Khv2LQQh>5tqJN@Y?|kNxo6e#H@mw5BbD=Bb96Z
+z*+gn~!eSzxiA+td;4ZJ0E}-;6L(GEs48okSFef(GH2^0JFaaQky|UD_DQ)4z3UOm$
+zB;>@Ac3W@&l@SE_kv(+r=$dWw(|9lq+%12usaCvZFU5a|9TEv3l7mlAyqQZ0Oh(eD
+z&nY``AaEEsXkv~nO0ei0CdqS~NwT8TCO~1=La{ZAOaj`)09;OeWm<j2&FsbkuZD*2
+z@-a@F2(f{-5ISrwWU`gkwIg2{o?9s(cg2j*;L*L?Ip#w7uQ_QhTe_7|oQ9j%&b|Oo
+zq8UK^`aazjH3+0sBpC=u&1QbbHvNwjVvRPpBB_vOR1GBK+Q5`a7w7KHR|c+Qqw4KT
+zKd9W~ht0g%-})bp8W6pQ8p~nn?)3+x6`5@@#?r)^-E=>+f#s^`3o4@y_zbM-C0h`x
+zBst*Us6$F;eZZ+Y2eyv(wFp{emkG1r+g&@(ZzIQS++Z-HKdN)q7haAxQlDuzO#1X5
+zqkk}}ViF+Y5&$rev)T)(iq^}Lq5IvsGE3M=01AKYhL39hEH^MG=1!n5Sf5dICz3Ti
+z@!;LPyN_(MB}?J@^;>k>ahSZ!D{0uMMKwmzr~A8Nfmv9+rZ*D+LLw$up#M8}k?d*;
+zCRvceumrU%Ss2AdwvuK-cP*gaX|ezd-#K^Bt}~<jka;zhlFwcuA9q0S^^32eZw3ci
+z)u;PwA`8<%x^3q5AMr-Jq-a=z0`?sUEeMTvjLwCbk#4M^1m;}-fKV7uCM*AahmJl=
+g@r1Z=lcrw`v!x^ik#Lm><V;BjnaGi3RTAI89;x*yD*ylh
+
+diff --git a/FCL/src/main/res/mipmap-mdpi/ic_launcher_round.png b/FCL/src/main/res/mipmap-mdpi/ic_launcher_round.png
+index 757a73f9e5228625d7b510dc1de4edb4743b5143..fcb4270a358ed39342e8bfb211e67bccc4805b9b 100644
+GIT binary patch
+literal 2145
+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
+
+diff --git a/FCL/src/main/res/mipmap-hdpi/ic_launcher_foreground.webp b/FCL/src/main/res/mipmap-hdpi/ic_launcher_foreground.webp
+index c4b6364d8a6ff84d82c644cf0d6d6fd86f9a6cbf..46e29df9f4cfbc5d9ced607b9e9e77b8878b7307 100644
+GIT binary patch
+literal 2834
+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
+
+diff --git a/FCL/src/main/res/mipmap-hdpi/ic_launcher_round.png b/FCL/src/main/res/mipmap-hdpi/ic_launcher_round.png
+index d8a9abd644704616614f0a7fe601bbd0ad6f5b3e..c202bc9203476fedec94a74544cc6bcf1714d0a8 100644
+GIT binary patch
+literal 3522
+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
+EKi)y9-2eap
+
+diff --git a/FCL/src/main/res/mipmap-xhdpi/ic_launcher_foreground.webp b/FCL/src/main/res/mipmap-xhdpi/ic_launcher_foreground.webp
+index 37677444a26f09a771537f2afc15fa4a7d33afd1..e51e410459c121c659c70b3407549937efcb2274 100644
+GIT binary patch
+literal 4012
+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
+S)Fe+)1ho-o|DXMT7B~P8B!4LY
+
+diff --git a/FCL/src/main/res/mipmap-xhdpi/ic_launcher_round.png b/FCL/src/main/res/mipmap-xhdpi/ic_launcher_round.png
+index b87b2419b32f7d6b4c56d541f20097f66591789b..f8edf2aceb1396bdcffc4b2ad03d1f8c6848e31e 100644
+GIT binary patch
+literal 5363
+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
+
+diff --git a/FCL/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.webp b/FCL/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.webp
+index 16efdef07a613ed8c2d2282018eeb3bd9ffef882..345f656b6d754d41bd1e69ba363dc71f91ce0354 100644
+GIT binary patch
+literal 6052
+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
+
+diff --git a/FCL/src/main/res/mipmap-xxhdpi/ic_launcher_round.png b/FCL/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
+index 9b499151ec90673e7bda7841bd099b65a7b7b1d6..3e7b175af9f57749de34a9a4b689d69d138ee045 100644
+GIT binary patch
+literal 9164
+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
+
+diff --git a/FCL/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.webp b/FCL/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.webp
+index 09f20640c702c3f482d083a8cf0e85b33087b95d..d52f3ea8329ec9fcaf5d92d9967afeda930b55a6 100644
+GIT binary patch
+literal 6578
+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
+
+diff --git a/FCL/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png b/FCL/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+index c6e797842943d6b78a1f5e65b43041f97d1a42af..52a15d3b00671af3de739ea02f830f58de52df6e 100644
+GIT binary patch
+literal 13363
+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
+HF%S74YiQ>1
+
+diff --git a/.github/scripts/check-codes-comment.js b/.github/scripts/check-codes-comment.js
+deleted file mode 100644
+--- a/.github/scripts/check-codes-comment.js
++++ /dev/null
+@@ -1,120 +0,0 @@
+-const fs = require("fs");
+-
+-module.exports = async ({ github, context, core }) => {
+-    const prNumberPath = process.env.PULL_REQUEST_NUMBER_PATH;
+-    if (!prNumberPath || !fs.existsSync(prNumberPath) || !fs.statSync(prNumberPath).isFile()) {
+-        core.setFailed("Pull request number file not found.");
+-        return;
+-    }
+-
+-    const reportsPath = process.env.REPORTS_PATH;
+-    if (!reportsPath || !fs.existsSync(reportsPath) || !fs.statSync(reportsPath).isFile()) {
+-        core.setFailed("Reports file not found.");
+-        return;
+-    }
+-
+-    const PULL_REQUEST_NUMBER = parseInt(fs.readFileSync(prNumberPath, "utf8").trim(), 10);
+-    if (isNaN(PULL_REQUEST_NUMBER)) {
+-        core.setFailed("Failed to parse the pull request number.");
+-        return;
+-    }
+-
+-    const { owner, repo } = context.repo;
+-
+-    let pr;
+-    try {
+-        const response = await github.rest.pulls.get({
+-            owner,
+-            repo,
+-            pull_number: PULL_REQUEST_NUMBER,
+-        });
+-        pr = response.data;
+-    } catch (error) {
+-        core.setFailed(`Failed to fetch PR #${PULL_REQUEST_NUMBER}: ${error.message}`);
+-        return;
+-    }
+-
+-    core.info(`Current PR state: ${pr.state}`);
+-    if (pr.state !== "open") {
+-        core.setFailed("The pull request is not open. Skipping comment creation.");
+-        return;
+-    }
+-
+-    const run = context.payload.workflow_run;
+-    if (!run) {
+-        core.setFailed("context.payload.workflow_run is undefined. Ensure this script runs on the 'workflow_run' event.");
+-        return;
+-    }
+-
+-    if (pr.head.sha !== run.head_sha) {
+-        core.setFailed("PR head SHA does not match the workflow run head SHA. Skipping.");
+-        return;
+-    }
+-
+-    if (pr.head.ref !== run.head_branch) {
+-        core.setFailed("PR head branch does not match the workflow run head branch. Skipping.");
+-        return;
+-    }
+-
+-    if (pr.head.repo.full_name !== run.head_repository.full_name) {
+-        core.setFailed("PR head repository fullname does not match the workflow run head repository fullname. Skipping.");
+-        return;
+-    }
+-
+-    const comments = [];
+-    const maxCommentCount = 10;
+-    const reports = fs.readFileSync(reportsPath, "utf8").trim().split("\n").filter(Boolean);
+-    for (const report of reports) {
+-        if (comments.length >= maxCommentCount) break;
+-        try {
+-            const data = JSON.parse(report);
+-            if (typeof data !== "object" || Array.isArray(data)) continue;
+-
+-            const { location, message, severity, code } = data;
+-            if (typeof location !== "object" || Array.isArray(location)) continue;
+-            if (typeof message !== "string") continue;
+-            const severities = ["UNKNOWN_SEVERITY", "ERROR", "WARNING", "INFO", 0, 1, 2, 3];
+-            if (!severities.includes(severity)) continue;
+-            const severityText = typeof severity === "string" ? severity : severities[severity];
+-            if (typeof code !== "object" || Array.isArray(code)) continue;
+-
+-            const path = location.path;
+-            const line = location.range?.start?.line;
+-            const codeText = code.value ? `[${code.value}] ` : "";
+-
+-            if (path && line) {
+-                comments.push({
+-                    path,
+-                    line,
+-                    side: "RIGHT",
+-                    body: `**[${severityText}]** ${codeText}\n\n${message}`
+-                });
+-            }
+-        } catch (error) {
+-            core.warning(`Failed to parse report: ${error.message}`);
+-        }
+-    }
+-
+-    if (comments.length === 0) {
+-        core.info("No diagnostics found to report as comments.");
+-        return;
+-    }
+-
+-    core.info(`Successfully prepared ${comments.length} comment${comments.length > 1 ? "s" : ""} to post.`);
+-
+-    try {
+-        await github.rest.pulls.createReview({
+-            owner,
+-            repo,
+-            pull_number: PULL_REQUEST_NUMBER,
+-            commit_id: run.head_sha,
+-            body: "🤖 Static analysis found the following issues (max count 10):",
+-            event: "COMMENT",
+-            comments: comments
+-        });
+-        core.info("Review comments successfully posted to the pull request.");
+-    } catch (error) {
+-        core.setFailed(`Failed to post review comments to GitHub: ${error.message}`);
+-        return;
+-    }
+-}
+\ No newline at end of file
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+deleted file mode 100644
+--- a/.github/workflows/build.yml
++++ /dev/null
+@@ -1,58 +0,0 @@
+-name: Build
+-
+-on:
+-  pull_request:
+-  push:
+-    branches:
+-      - "**"
+-    paths-ignore:
+-      - ".github/workflows/**"
+-      - "**.md"
+-      - "version_map.json"
+-  workflow_dispatch:
+-  workflow_call:
+-
+-jobs:
+-  build:
+-    name: Build for ${{matrix.arch}}
+-    strategy:
+-      matrix:
+-        arch: ["all", "arm", "arm64", "x86", "x86_64"]
+-      fail-fast: false
+-    env:
+-      FCL_KEYSTORE_PASSWORD: ${{ secrets.FCL_KEYSTORE_PASSWORD }}
+-      CURSE_API_KEY: ${{ secrets.CURSE_API_KEY }}
+-      OAUTH_API_KEY: ${{ secrets.OAUTH_API_KEY }}
+-    runs-on: ubuntu-latest
+-    steps:
+-      - name: Checkout code
+-        uses: actions/checkout@v7
+-        with:
+-          fetch-depth: 0
+-          submodules: recursive
+-
+-      - name: Set up JDK 17
+-        uses: actions/setup-java@v5
+-        with:
+-          distribution: "temurin"
+-          java-version: 17
+-          cache: "gradle"
+-
+-      - name: Build release apk
+-        if: ${{ github.repository_owner == 'FCL-Team' && github.event_name != 'pull_request' }}
+-        run: |
+-          chmod +x gradlew
+-          ./gradlew assemblerelease -Darch=${{ matrix.arch }} --no-daemon
+-
+-      - name: Build debug apk
+-        if: ${{ github.repository_owner != 'FCL-Team' || github.event_name == 'pull_request' }}
+-        run: |
+-          chmod +x gradlew
+-          ./gradlew assemblefordebug -Darch=${{ matrix.arch }} --no-daemon
+-
+-      - name: Upload apk
+-        uses: actions/upload-artifact@v6
+-        with:
+-          name: app-${{matrix.arch}}
+-          path: FCL/build/outputs/apk/*/*
+-        #  retention-days: 1
+diff --git a/.github/workflows/check-codes-comment.yml b/.github/workflows/check-codes-comment.yml
+deleted file mode 100644
+--- a/.github/workflows/check-codes-comment.yml
++++ /dev/null
+@@ -1,40 +0,0 @@
+-name: Check Codes Comment
+-
+-on:
+-  workflow_run:
+-    workflows: ["Check Codes"]
+-    types:
+-      - completed
+-
+-permissions:
+-  actions: read
+-  contents: read
+-  pull-requests: write
+-
+-jobs:
+-  comment:
+-    runs-on: ubuntu-latest
+-    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'failure'
+-    steps:
+-      - name: Checkout Script
+-        uses: actions/checkout@v7
+-        with:
+-          sparse-checkout: |
+-            .github/scripts/check-codes-comment.js
+-          sparse-checkout-cone-mode: false
+-      - name: Download Artifact
+-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+-        with:
+-          name: checkstyle-artifact
+-          path: ${{ runner.temp }}/checkstyle-artifact
+-          run-id: ${{ github.event.workflow_run.id }}
+-          github-token: ${{ secrets.GITHUB_TOKEN }}
+-      - name: Generate Review Comment
+-        uses: actions/github-script@v9
+-        env:
+-          REPORTS_PATH: ${{ runner.temp }}/checkstyle-artifact/ALL_REPORTS.jsonl
+-          PULL_REQUEST_NUMBER_PATH: ${{ runner.temp }}/checkstyle-artifact/PULL_REQUEST_NUMBER
+-        with:
+-          script: |
+-            const script = require("./.github/scripts/check-codes-comment.js");
+-            await script({ github, context, core });
+\ No newline at end of file
+diff --git a/.github/workflows/check-codes.yml b/.github/workflows/check-codes.yml
+deleted file mode 100644
+--- a/.github/workflows/check-codes.yml
++++ /dev/null
+@@ -1,54 +0,0 @@
+-name: Check Codes
+-
+-on:
+-  push:
+-    paths:
+-      - '**.java'
+-      - '**.kt'
+-  pull_request:
+-    paths:
+-      - '**.java'
+-      - '**.kt'
+-
+-jobs:
+-  build:
+-    runs-on: ubuntu-latest
+-    steps:
+-      - uses: actions/checkout@v6
+-      - name: Setup JDK 17
+-        uses: actions/setup-java@v5
+-        with:
+-          distribution: 'zulu'
+-          java-version: '17'
+-      - name: Setup Gradle
+-        uses: gradle/actions/setup-gradle@v5
+-        with:
+-          cache-cleanup: never
+-      - name: Check Codes
+-        run: ./gradlew checkstyle --no-daemon --parallel --stacktrace
+-      - if: failure() && github.event_name == 'pull_request'
+-        name: Setup reviewdog
+-        uses: reviewdog/action-setup@d8edfce3dd5e1ec6978745e801f9c50b5ef80252 # v1.4.0
+-        with:
+-          reviewdog_version: v0.21.0
+-      - if: failure() && github.event_name == 'pull_request'
+-        name: Generate Artifact
+-        run: |
+-          echo "${{ github.event.number }}" > PULL_REQUEST_NUMBER
+-          > ALL_REPORTS.jsonl
+-          find . -path "*/build/reports/checkstyle/*.xml" | while read -r xml_file; do
+-            if [ -s "$xml_file" ]; then
+-              echo "Processing $xml_file..."
+-              reviewdog -f=checkstyle -name="checkstyle" -reporter=rdjsonl < "$xml_file" >> ALL_REPORTS.jsonl
+-            else
+-              echo "Skipping empty or missing report: $xml_file"
+-            fi
+-          done
+-      - if: failure() && github.event_name == 'pull_request'
+-        name: Upload Artifact
+-        uses: actions/upload-artifact@v7
+-        with:
+-          name: checkstyle-artifact
+-          path: |
+-            ALL_REPORTS.jsonl
+-            PULL_REQUEST_NUMBER
+\ No newline at end of file
+diff --git a/.github/workflows/cleanup-artifacts.yml b/.github/workflows/cleanup-artifacts.yml
+deleted file mode 100644
+--- a/.github/workflows/cleanup-artifacts.yml
++++ /dev/null
+@@ -1,15 +0,0 @@
+-name: Remove old artifacts
+-on:
+-  workflow_dispatch:
+-
+-jobs:
+-  remove-old-artifacts:
+-    runs-on: ubuntu-latest
+-    timeout-minutes: 10
+-    permissions:
+-      actions: write
+-    steps:
+-      - name: Remove old artifacts
+-        uses: c-hive/gha-remove-artifacts@v1
+-        with:
+-          age: "2 days" # '<number> <unit>', e.g. 5 days, 2 years, 90 seconds, parsed by Moment.js
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+deleted file mode 100644
+--- a/.github/workflows/release.yml
++++ /dev/null
+@@ -1,38 +0,0 @@
+-name: Release
+-
+-on:
+-  push:
+-    tags:
+-      - "*"
+-
+-jobs:
+-  build:
+-    uses: ./.github/workflows/build.yml
+-    secrets: inherit
+-
+-  release:
+-    needs: build
+-    runs-on: ubuntu-latest
+-    steps:
+-      - name: Checkout
+-        uses: actions/checkout@v4
+-
+-      - name: Download apks
+-        uses: actions/download-artifact@v6
+-        with:
+-          path: apks
+-
+-      - name: Extract changelog for current version
+-        run: |
+-          awk -v tag="$GITHUB_REF_NAME" '
+-            $0 ~ "^## \\[" tag "\\]" { found = 1; next }
+-            found && $0 ~ "^## \\[" { exit }
+-            found { print }
+-          ' CHANGELOG.md > RELEASE_BODY.md
+-
+-      - name: Release
+-        uses: softprops/action-gh-release@v3
+-        with:
+-          token: ${{ secrets.TOKEN }}
+-          files: apks/**/*.apk
+-          body_path: RELEASE_BODY.md
+diff --git a/README_EN.md b/README_EN.md
+deleted file mode 100644
+--- a/README_EN.md
++++ /dev/null
+@@ -1,109 +0,0 @@
+-<div align="center">
+-    <img width="75" src="/FCL/src/main/res/drawable/img_app.png"></img>
+-</div>
+-
+-<h1 align="center">Fold Craft Launcher</h1>
+-
+-<div align="center">
+-
+-[![Android CI](https://github.com/FCL-Team/FoldCraftLauncher/actions/workflows/build.yml/badge.svg)](https://github.com/FCL-Team/FoldCraftLauncher/actions/workflows/build.yml)
+-![Downloads](https://img.shields.io/github/downloads/FCL-Team/FoldCraftLauncher/total?style=flat-square&color=f18cb9)
+-![Release](https://img.shields.io/github/v/release/FCL-Team/FoldCraftLauncher?style=flat-square&color=f18cb9)
+-
+-[![Discord](https://img.shields.io/badge/Discord-red?logo=discord&logoColor=white)](https://discord.gg/ffhvuXTwyV)
+-[![QQ](https://img.shields.io/badge/QQ-green)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=LwxydGEvBZJnn09sXOjkQo9tuuLcYwx5&authKey=seyY5pPUCIHMWS5FqVryq926T0G2GarSXetpxxV9DJxBVt%2FPcg1vxN%2F%2FXpsCowyk&noverify=0&group_code=762054349)
+-[![Sponsor](https://img.shields.io/badge/sponsor-blue?logo=GitHub-Sponsors)](https://afdian.com/@tungs)
+-
+-</div>
+-
+-🌍 **Language**  
+-[简体中文](./README.md) | English | [Русский язык](./README_RU.md)
+-
+-> ✨ **Project Introduction**  
+-> 「Fold Craft Launcher」 is a Minecraft: Java Edition launcher for Android platforms developed by the FCL Team. Built upon the core functionalities of [HMCL](https://github.com/HMCL-dev/HMCL) and using the [Amethyst-Android](https://github.com/AngelAuraMC/Amethyst-Android) backend, it enables users to enjoy Java Edition MC on mobile devices, supporting mod loading and operation across all versions.
+-
+----
+-
+-## 🚀 Core Features
+-
+-✅ **Full Version Support**  
+-- Native support for all Minecraft versions (including latest snapshots)
+-- Mod loader support: Forge/NeoForge/LiteLoader/OptiFine/Fabric/Quilt/Cleanroom...
+-
+-⚙️ **Key Highlights**  
+-- Built-in multi-version Java runtimes (Java 8/17/21/25) with custom Java import support
+-- Virtual mouse and customizable key mapping
+-- FCL↔ZalithLauncher2 control layout conversion, importing a ZL2 layout converts it automatically
+-- Shaders support (requires VirGL/Zink/MG renderers)
+-- Dynamic resource management (mods/modpacks/textures/shaders/saves)
+-- Personalized theme customization (background/color schemes)
+-- Supports [renderer pluginization](https://github.com/ShirosakiMio/FCLRendererPlugin)
+-
+----
+-
+-## 🎮 Screenshots
+-
+-<div align="center">
+-  <img src="/.github/images/ui_main_light.jpg" width="30%" alt="Light Theme">
+-  <img src="/.github/images/ui_main_dark.jpg" width="30%" alt="Dark Theme">
+-  <img src="/.github/images/game.jpg" width="30%" alt="Gameplay Preview">
+-</div>
+-
+----
+-
+-## 📜 License
+-
+-This project is licensed under **[GPL-3.0 License](https://www.gnu.org/licenses/gpl-3.0.html)**
+-
+----
+-
+-## 🌍 Translation
+-
+-We'd love your help with translations! The project's localization is managed on [Weblate](https://hosted.weblate.org/projects/foldcraftlauncher/) — no tools needed, just translate in your browser.
+-
+----
+-
+-## 🤝 Contributions & Acknowledgements
+-### Contributors Wall
+-<a href="https://github.com/FCL-Team/FoldCraftLauncher/graphs/contributors">
+-  <img src="https://contrib.rocks/image?repo=FCL-Team/FoldCraftLauncher" />
+-</a>
+-
+-### Related Projects
+-- [HMCL](https://github.com/HMCL-dev/HMCL): source of core functionality (fclcore ported from `org.jackhuang.hmcl`)
+-- [Boat and related projects](https://github.com/AOF-Dev/Boat)
+-- [Amethyst-Android](https://github.com/AngelAuraMC/Amethyst-Android) (PojavLauncher's Android fork): JVM launching and rendering backend
+-- [authlib-injector](https://github.com/yushijinhun/authlib-injector)
+-- [EasyTier](https://github.com/EasyTier/EasyTier): underlying mesh networking for LAN play
+-- [Terracotta](https://github.com/burningtnt/Terracotta): LAN play solution based on EasyTier (Terracotta module JNI wrapper)
+-- [TouchController](https://github.com/TouchController/TouchController): touch controller dependency
+-- [NG-GL4ES](https://github.com/ShirosakiMio/NG-GL4ES): gl4es fork renderer (prebuilt aar shipped with FCL)
+-- [FCLRendererPlugin](https://github.com/ShirosakiMio/FCLRendererPlugin): renderer plugin extension
+-- [FCLDriverPlugin](https://github.com/FCL-Team/FCLDriverPlugin): driver (Turnip etc.) plugin extension
+-
+-### Dependencies
+-
+-- [Amethyst-Android](https://github.com/AngelAuraMC/Amethyst-Android) (PojavLauncher's Android fork): [GPL-3.0]
+-- Android Support
+-  Libraries: [Apache License 2.0](https://android.googlesource.com/platform/prebuilts/maven_repo/android/+/master/NOTICE.txt)
+-- [GL4ES](https://github.com/ptitSeb/gl4es): [MIT License](https://github.com/ptitSeb/gl4es/blob/master/LICENSE)
+-- [NG-GL4ES](https://github.com/ShirosakiMio/NG-GL4ES) (gl4es fork derived from Krypton Wrapper, used as a prebuilt aar)
+-- [ANGLE](https://chromium.googlesource.com/angle/angle): [BSD-3 License](https://chromium.googlesource.com/angle/angle/+/refs/heads/main/LICENSE)
+-- [OpenJDK](https://github.com/AngelAuraMC/openjdk-multiarch-jdk8u): [GNU GPLv2 License](https://openjdk.java.net/legal/gplv2+ce.html) (runtimes built and released by FCL-Team)
+-- [LWJGL3](https://github.com/LWJGL/lwjgl3) (official jars + Android source patches): [BSD-3 License](https://github.com/LWJGL/lwjgl3/blob/master/LICENSE.md)
+-- [LWJGLX](https://github.com/AngelAuraMC/lwjglx) (LWJGL2 API compatibility layer for LWJGL3):
+-  unknown license
+-- [Mesa 3D Graphics Library](https://gitlab.freedesktop.org/mesa/mesa): [MIT License](https://docs.mesa3d.org/license.html)
+-- [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross) (SPIR-V reflection/translation, natives packaged as aar): [Apache License 2.0](https://github.com/KhronosGroup/SPIRV-Cross/blob/master/LICENSE)
+-- [bhook](https://github.com/bytedance/bhook) (Used for exit code
+-  trapping): [MIT license](https://github.com/bytedance/bhook/blob/main/LICENSE).
+-- [libepoxy](https://github.com/anholt/libepoxy): [MIT License](https://github.com/anholt/libepoxy/blob/master/COPYING).
+-- [virglrenderer](https://github.com/AngelAuraMC/virglrenderer): [MIT License](https://gitlab.freedesktop.org/virgl/virglrenderer/-/blob/master/COPYING).
+-- [OpenAL-Soft](https://github.com/kcat/openal-soft): [GNU LGPLv2.1](https://github.com/kcat/openal-soft/blob/master/COPYING)
+-    - [oboe](https://github.com/google/oboe): [Apache License 2.0](https://github.com/google/oboe/blob/main/LICENSE).
+-    - [pfffft](https://bitbucket.org/jpommier/pffft/src/master/): [ARR]
+-- [EasyTier](https://github.com/EasyTier/EasyTier) (embedded networking layer in the Terracotta module): [LGPL-3.0](https://github.com/EasyTier/EasyTier/blob/main/LICENSE)
+-- [Terracotta](https://github.com/burningtnt/Terracotta) (`net.burningtnt.terracotta` JNI wrapper): [AGPL-3.0](https://github.com/burningtnt/Terracotta/blob/main/LICENSE)
+-- [TouchController](https://github.com/TouchController/TouchController) (touch controller): [LGPL-3.0](https://github.com/TouchController/TouchController/blob/main/LICENSE)
+-- [discord-rpc](https://github.com/discord/discord-rpc) (libdiscord-rpc.so): [MIT License](https://github.com/discord/discord-rpc/blob/master/LICENSE)
+-- [control-converter](https://github.com/NingZeStudio/control-converter) (FCL↔ZL2 control layout converter, pure Kotlin implementation in-tree based on cc.py semantics, no longer packaged as `libcc.so`): [MIT License](https://opensource.org/licenses/MIT)
+diff --git a/README_RU.md b/README_RU.md
+deleted file mode 100644
+--- a/README_RU.md
++++ /dev/null
+@@ -1,97 +0,0 @@
+-<div align="center">
+-    <img width="75" src="/FCL/src/main/res/drawable/img_app.png"></img>
+-</div>
+-
+-<h1 align="center">Fold Craft Launcher</h1>
+-
+-<div align="center">
+-
+-[![Android CI](https://github.com/FCL-Team/FoldCraftLauncher/actions/workflows/build.yml/badge.svg)](https://github.com/FCL-Team/FoldCraftLauncher/actions/workflows/build.yml)
+-![Загрузки](https://img.shields.io/github/downloads/FCL-Team/FoldCraftLauncher/total?style=flat-square&color=f18cb9)
+-![Релиз](https://img.shields.io/github/v/release/FCL-Team/FoldCraftLauncher?style=flat-square&color=f18cb9)
+-
+-[![Discord](https://img.shields.io/badge/Discord-red?logo=discord&logoColor=white)](https://discord.gg/ffhvuXTwyV)
+-[![QQ](https://img.shields.io/badge/QQ-green)](http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=LwxydGEvBZJnn09sXOjkQo9tuuLcYwx5&authKey=seyY5pPUCIHMWS5FqVryq926T0G2GarSXetpxxV9DJxBVt%2FPcg1vxN%2F%2FXpsCowyk&noverify=0&group_code=762054349)
+-[![Поддержать](https://img.shields.io/badge/sponsor-blue?logo=GitHub-Sponsors)](https://afdian.com/@tungs)
+-
+-</div>
+-
+-🌍 **Язык**
+-[简体中文](./README.md) | [English](./README_EN.md) | Русский
+-
+-> 「Fold Craft Launcher」 — это лаунчер Minecraft: Java Edition для платформы Android, разрабатываемый командой FCL Team. Созданный на базе ключевых функций [HMCL](https://github.com/HMCL-dev/HMCL) и с интеграцией бэкенда [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher), он позволяет запускать Minecraft: Java Edition на мобильных устройствах, поддерживая загрузку и работу модов для всех версий игры.
+-
+----
+-
+-## 🚀 Основные возможности
+-
+-✅ **Поддержка всех версий**  
+-- Встроенная поддержка всех версий Minecraft (включая последние снапшоты)
+-- Поддержка загрузчиков модов: Forge/NeoForge/LiteLoader/OptiFine/Fabric/Quilt/Cleanroom...
+-
+-⚙️ **Основные преимущества**  
+-- Встроенные среды выполнения Java разных версий (Java 8/17/21/25) с возможностью импорта пользовательских версий Java
+-- Виртуальная мышь и переназначение клавиш
+-- Конвертация раскладок управления между FCL и ZalithLauncher2, импорт раскладок ZL2 с автоматическим преобразованием
+-- Поддержка шейдеров (требуются рендереры VirGL/Zink/MG)
+-- Гибкое управление ресурсами (моды/модпаки/текстуры/шейдеры/сохранения)
+-- Настройка тем оформления (фон/цветовые схемы)
+-- Поддержка [плагинов рендеринга](https://github.com/ShirosakiMio/FCLRendererPlugin)
+-
+----
+-
+-## 🎮 Скриншоты
+-
+-<div align="center">
+-  <img src="/.github/images/ui_main_light.jpg" width="30%" alt="Светлая тема">
+-  <img src="/.github/images/ui_main_dark.jpg" width="30%" alt="Тёмная тема">
+-  <img src="/.github/images/game.jpg" width="30%" alt="Игровой процесс">
+-</div>
+-
+----
+-
+-## 📜 Лицензия
+-
+-Данный проект распространяется под **[лицензией GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)**
+-
+----
+-
+-## 🌍 Перевод
+-
+-Присоединяйтесь к переводу проекта! Локализация управляется через [Weblate](https://hosted.weblate.org/projects/foldcraftlauncher/) — никаких инструментов не требуется, просто переводите в браузере.
+-
+----
+-
+-## 🤝 Участие и благодарности
+-### Стена участников
+-<a href="https://github.com/FCL-Team/FoldCraftLauncher/graphs/contributors">
+-  <img src="https://contrib.rocks/image?repo=FCL-Team/FoldCraftLauncher" />
+-</a>
+-
+-### Связанные проекты
+-- [HMCL](https://github.com/HMCL-dev/HMCL)
+-- [Boat и связанные проекты](https://github.com/AOF-Dev/Boat)
+-- [PojavLauncher и связанные проекты](https://github.com/PojavLauncherTeam/PojavLauncher)
+-- [authlib-injector](https://github.com/yushijinhun/authlib-injector)
+-
+-### Сторонние компоненты
+-
+-- [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher): [GLGPL]
+-- Android Support
+-  Libraries: [Apache License 2.0](https://android.googlesource.com/platform/prebuilts/maven_repo/android/+/master/NOTICE.txt)
+-- [GL4ES](https://github.com/AngelAuraMC/gl4es): [MIT License](https://github.com/ptitSeb/gl4es/blob/master/LICENSE)
+-- [NG-GL4ES (Krypton Wrapper)](https://github.com/BZLZHH/NG-GL4ES)
+-- [ANGLE](https://chromium.googlesource.com/angle/angle): [All Rights Reserved](app_pojavlauncher/src/main/assets/licenses/ANGLE_LICENSE)
+-- [OpenJDK](https://github.com/AngelAuraMC/openjdk-multiarch-jdk8u): [GNU GPLv2 License](https://openjdk.java.net/legal/gplv2+ce.html)
+-- [LWJGL3](https://github.com/AngelAuraMC/lwjgl3): [BSD-3 License](https://github.com/LWJGL/lwjgl3/blob/master/LICENSE.md)
+-- [LWJGLX](https://github.com/AngelAuraMC/lwjglx) (LWJGL2 API compatibility layer for LWJGL3):
+-  unknown license
+-- [Mesa 3D Graphics Library](https://gitlab.freedesktop.org/mesa/mesa): [MIT License](https://docs.mesa3d.org/license.html)
+-- [bhook](https://github.com/bytedance/bhook) (Used for exit code
+-  trapping): [MIT license](https://github.com/bytedance/bhook/blob/main/LICENSE).
+-- [libepoxy](https://github.com/anholt/libepoxy): [MIT License](https://github.com/anholt/libepoxy/blob/master/COPYING).
+-- [virglrenderer](https://github.com/AngelAuraMC/virglrenderer): [MIT License](https://gitlab.freedesktop.org/virgl/virglrenderer/-/blob/master/COPYING).
+-- [OpenAL-Soft](https://github.com/kcat/openal-soft): [GNU GPLv2](app_pojavlauncher/src/main/assets/licenses/OPENAL-SOFT_GPL2)
+-    - [oboe](https://github.com/google/oboe): [Apache License 2.0](app_pojavlauncher/src/main/assets/licenses/OBOE_APACHE2).
+-    - [pfffft](https://bitbucket.org/jpommier/pffft/src/master/): [ARR](app_pojavlauncher/src/main/assets/licenses/PFFFT_LICENSE)
+-- [control-converter](https://github.com/NingZeStudio/control-converter) (конвертер раскладок управления FCL↔ZL2, встроенная реализация на чистом Kotlin на основе семантики cc.py, больше не упакован как `libcc.so`): [MIT License](https://opensource.org/licenses/MIT)
+\ No newline at end of file

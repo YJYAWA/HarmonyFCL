@@ -169,10 +169,15 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
                         this.allVersions = result;
                         reloadVersions();
                         checkInstalled();
+                        // 只在成功时收尾：setLoading(false) 会把 layout 置为 VISIBLE，
+                        // 失败后再调它会把 setFailed() 藏起来的空布局又显示出来 ——
+                        // 用户看到的就是「详情页能打开、图像也在，但版本列表一片空白」，
+                        // 连重试按钮都因为布局恢复而显得莫名其妙。失败路径由 setFailed()
+                        // 自己负责收掉进度条。
+                        setLoading(false);
                     } else {
                         setFailed();
                     }
-                    setLoading(false);
                 }).start();
     }
 
