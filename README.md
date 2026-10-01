@@ -341,5 +341,67 @@ MobileGL 在 [`third_party/MobileGL/`](third_party/MobileGL/)，构建命令见 
 > （不是静态链接、也没被改写进 FCL 自己的二进制），源码整棵在 `third_party/` 下，
 > 因此接收者具备自行重建与替换的全部条件。逐项说明见 [NOTICE.md](NOTICE.md)。
 
-感谢 **FoldCraftLauncher**、**MobileGlues** 与 **MobileGL** 三个上游项目。
+**许可证文本随 APK 分发。** 构建产物自身携带 `assets/licenses/`（GPL-3.0、LGPL-2.1、
+LGPL-3.0、AGPL-3.0、EasyTier-LGPL-3.0 全文）与 `assets/NOTICE.txt`，所以只拿到 APK 的人
+也能看到许可证全文与源码获取方式。核对：
+
+```bash
+unzip -l HarmonyFCL-<版本>-<abi>.apk | grep -E 'assets/(licenses/|NOTICE)'
+```
+
+---
+
+## 相关项目
+
+以下与上游 FoldCraftLauncher 的 README 一致，本 fork 沿用同一套上游依赖。
+
+- [FoldCraftLauncher](https://github.com/FCL-Team/FoldCraftLauncher)：本 fork 的上游（GPL-3.0）
+- [HMCL](https://github.com/HMCL-dev/HMCL)：核心功能来源（fclcore 移植自 `org.jackhuang.hmcl`）
+- [Boat 及其相关项目](https://github.com/AOF-Dev/Boat)
+- [Amethyst-Android](https://github.com/AngelAuraMC/Amethyst-Android)（PojavLauncher Android fork）：JVM 启动与渲染后端
+- [authlib-injector](https://github.com/yushijinhun/authlib-injector)
+- [EasyTier](https://github.com/EasyTier/EasyTier)：局域网联机组网底层（内嵌在 Terracotta 模块中）
+- [Terracotta](https://github.com/burningtnt/Terracotta)：基于 EasyTier 的联机方案（Terracotta 模块 JNI 封装）
+- [TouchController](https://github.com/TouchController/TouchController)：触摸控制器依赖
+- [NG-GL4ES](https://github.com/ShirosakiMio/NG-GL4ES)：gl4es fork 渲染器（构建产物以 aar 随 FCL 发布）
+- [FCLRendererPlugin](https://github.com/ShirosakiMio/FCLRendererPlugin)：渲染器插件扩展
+- [FCLDriverPlugin](https://github.com/FCL-Team/FCLDriverPlugin)：驱动（Turnip 等）插件扩展
+- [MobileGlues](https://github.com/MobileGL-Dev/MobileGlues)（**本 fork 新增**）：内嵌为默认渲染器，见 [NOTICE.md 第一节](NOTICE.md)
+- [MobileGL](https://github.com/MobileGL-Dev/MobileGL)（**本 fork 新增**）：26.3 起的渲染器，见 [NOTICE.md 第一节](NOTICE.md)
+
+## 依赖
+
+同样与上游 FoldCraftLauncher 的 README 一致；Android 平台第三方组件的逐项核对见
+[NOTICE.md](NOTICE.md)。
+
+- [Amethyst-Android](https://github.com/AngelAuraMC/Amethyst-Android)（PojavLauncher Android fork）: [GPL-3.0]
+- Android Support Libraries: [Apache License 2.0](https://android.googlesource.com/platform/prebuilts/maven_repo/android/+/master/NOTICE.txt)
+- [GL4ES](https://github.com/ptitSeb/gl4es): [MIT License](https://github.com/ptitSeb/gl4es/blob/master/LICENSE)
+- [NG-GL4ES](https://github.com/ShirosakiMio/NG-GL4ES)（gl4es fork，Krypton Wrapper 衍生，FCL 以 aar 形式使用预构建产物）
+- [ANGLE](https://chromium.googlesource.com/angle/angle): [BSD-3 License](https://chromium.googlesource.com/angle/angle/+/refs/heads/main/LICENSE)
+- [OpenJDK](https://github.com/AngelAuraMC/openjdk-multiarch-jdk8u): [GNU GPLv2 License](https://openjdk.java.net/legal/gplv2+ce.html)（运行时由 FCL-Team 自建并随版本发布）
+- [LWJGL3](https://github.com/LWJGL/lwjgl3)（官方 jar + Android 源码补丁）: [BSD-3 License](https://github.com/LWJGL/lwjgl3/blob/master/LICENSE.md)
+- [LWJGLX](https://github.com/AngelAuraMC/lwjglx) (LWJGL2 API compatibility layer for LWJGL3): unknown license
+- [Mesa 3D Graphics Library](https://gitlab.freedesktop.org/mesa/mesa): [MIT License](https://docs.mesa3d.org/license.html)
+- [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross)（SPIR-V 反射/转换，natives 以 aar 打包）: [Apache License 2.0](https://github.com/KhronosGroup/SPIRV-Cross/blob/master/LICENSE)
+- [bhook](https://github.com/bytedance/bhook) (Used for exit code trapping): [MIT license](https://github.com/bytedance/bhook/blob/main/LICENSE)
+- [libepoxy](https://github.com/anholt/libepoxy): [MIT License](https://github.com/anholt/libepoxy/blob/master/COPYING)
+- [virglrenderer](https://github.com/AngelAuraMC/virglrenderer): [MIT License](https://gitlab.freedesktop.org/virgl/virglrenderer/-/blob/master/COPYING)
+- [OpenAL-Soft](https://github.com/kcat/openal-soft): [GNU LGPLv2.1](https://github.com/kcat/openal-soft/blob/master/COPYING)
+  - [oboe](https://github.com/google/oboe): [Apache License 2.0](https://github.com/google/oboe/blob/main/LICENSE)
+  - [pffft](https://bitbucket.org/jpommier/pffft/src/master/): [ARR]
+- [EasyTier](https://github.com/EasyTier/EasyTier)（Terracotta 模块内嵌组网底层）: [LGPL-3.0](https://github.com/EasyTier/EasyTier/blob/main/LICENSE)
+- [Terracotta](https://github.com/burningtnt/Terracotta)（`net.burningtnt.terracotta` JNI 封装）: [AGPL-3.0](https://github.com/burningtnt/Terracotta/blob/main/LICENSE)
+- [TouchController](https://github.com/TouchController/TouchController)（触摸控制器）: [LGPL-3.0](https://github.com/TouchController/TouchController/blob/main/LICENSE)
+- [discord-rpc](https://github.com/discord/discord-rpc)（`libdiscord-rpc.so`）: [MIT License](https://github.com/discord/discord-rpc/blob/master/LICENSE)
+- [control-converter](https://github.com/NingZeStudio/control-converter)（FCL↔ZL2 控制布局转换，以 cc.py 为语义基准的内置纯 Kotlin 实现）: [MIT License](https://opensource.org/licenses/MIT)
+- [MobileGlues](https://github.com/MobileGL-Dev/MobileGlues)（**本 fork 新增**，内嵌为默认渲染器）: [LGPL-2.1-only](third_party/MobileGlues/LICENSE)
+- [MobileGL](https://github.com/MobileGL-Dev/MobileGL)（**本 fork 新增**，26.3 起的渲染器）: [LGPL-3.0](third_party/MobileGL/COPYING.LESSER)
+- glslang / SPIRV-Tools / SPIRV-Reflect / xxHash / asio / flat_hash_map（**随上述两个渲染器静态链接**）: 见 [NOTICE.md 第二节](NOTICE.md)
+
+---
+
+感谢 **FoldCraftLauncher**、**HMCL**、**MobileGlues** 与 **MobileGL** 等上游项目。
 如果这个 fork 对你有用，也请去给上游点 star。
+
+本分支（Harmony FCL，包名 `com.harmony.fcl`）是社区修改版，与 FCL-Team 官方团队无隶属关系。
