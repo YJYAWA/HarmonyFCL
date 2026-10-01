@@ -108,8 +108,9 @@ git apply -p1 ../HarmonyFCL/patches/mobilegl-no-vulkan.patch
 混用、别去动它）。
 
 所以拿本副本与上游逐字节比对时，**子模块那部分会因行尾不同而全线报差异** ——
-先两边都归一化成 LF 再比。这不影响构建：C++ 编译器不在意行尾，实机验证过的 `.so`
-就是用本副本编出来的（见下）。
+先两边都归一化成 LF 再比。这不影响构建：C++ 编译器不在意行尾 —— 用本副本编出来的
+`libMobileGL.so` 与仓库里预置的那份导出符号数一致（都是 12038 个），
+见下「[验证这份副本是完整的](#验证这份副本是完整的)」一节。
 
 ## 没有 vendored 的部分
 
@@ -138,6 +139,21 @@ $CMAKE -S . -B build-verify -G Ninja \
 ```
 
 配置输出里应出现 `-- optimizer enabled`（表示找到了 SPIRV-Tools）。
+
+再真编一次：
+
+```bash
+$CMAKE --build build-verify --target MobileGL -j4
+```
+
+本副本入库前跑过一遍：420/420 个目标、0 error，产物未 strip 267.4 MB。对新编出的 `.so`
+跑 BUILD.md 第 4 节那四条 Vulkan 断言，全部通过（`DT_NEEDED` 只有
+`libandroid/liblog/libm/libdl/libc`、未定义 `vk*`/`Vk*` 符号 0 个、6 个关键 EGL 入口齐全、
+`VK_KHR` 字符串 1 处且是已知的 glslang 诊断消息），导出符号 12038 个，与仓库里预置的
+那份一致。
+
+> 以上只验证到「本副本能编出符号一致的库」。**它能不能在麒麟设备上真的跑起来，还没有
+> 实机确认过** —— 见 [BUILD.md 第 9 节](../../BUILD.md#9-已知限制与实机验证清单)。
 
 ## 关于「OpenGL 4.6」还是「4.2」
 
