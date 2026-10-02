@@ -12,7 +12,13 @@ import com.tungsten.fclcore.util.versioning.GameVersionNumber
 import java.util.logging.Level
 
 /**
- * 启动器每次打开时，对所有游戏实例做一次幂等自检与修正。
+ * 对游戏实例做一次幂等自检与修正。**两个触发点**：
+ *
+ * - [applyAll]：**每次打开启动器时**，后台协程扫全部实例；
+ * - [applyToVersion]：**每次启动游戏前**，只处理被点的那一个
+ *   （`LauncherHelper.launch0()` 任务链里的 `launch.state.instance_fix` 一栏）。
+ *
+ * 两处都是幂等的，重复跑不会有副作用。
  *
  * 修正四件事：
  *
@@ -79,8 +85,13 @@ object InstanceAutoFix {
     private const val MOBILEGL_MIN_MC = "26.3"
 
     /**
-     * 入口。挂在 `SplashActivity.enterLauncher()` 里 `ConfigHolder.init()` 之后，
+     * 全量入口：挂在 `SplashActivity.enterLauncher()` 里 `ConfigHolder.init()` 之后，
      * 用独立的 IO 协程跑、**不 await**——这里会碰磁盘，不能拖慢启动。
+     *
+     * ⚠️ **这不是唯一的入口。** 同一个自检还会在**每次启动游戏前**对**该实例**再跑一次
+     * （`LauncherHelper.launch0()` 任务链里的 `launch.state.instance_fix` 一栏，见
+     * [applyToVersion] 的说明）。两边都是幂等的，所以重复跑不会互相打架：
+     * 第一次改完第二次就没得改，直接返回 `false`。
      *
      * 任何单个实例出错都只记日志并继续，绝不向外抛。
      */
@@ -113,11 +124,34 @@ object InstanceAutoFix {
     }
 
     /**
-     * 处理单个实例。返回是否发生了实际改动。
+     * 处理**单个**实例，返回是否发生了实际改动。
+     *
+     * 两个调用方：
+     *
+     * 1. [applyAll]（每次打开启动器时，扫全部实例）；
+     * 2. `LauncherHelper.launch0()` 的 `launch.state.instance_fix` 一栏
+     *    （**每次启动游戏前**，只处理被点的那一个）。
+     *
+     * 第 2 条是必需的，不能只靠第 1 条：第 1 条是**不 await 的后台协程**，
+     * 用户完全可能在它跑完之前就点下启动；而且启动器开着的时候用户还能在设置里
+     * 手改渲染器 / JVM 参数，那之后只有再点一次启动器才会被纠正。
+     *
+     * ⚠️ **调用方在自检之后必须重新取一次版本设置。**
+     *
+     * 这个函数会在实例开着「使用全局设置」时把它切成游戏特定设置
+     * （`isUsesGlobal = false`，见下面第 2 步）。切换之前调用方手里那个
+     * `VersionSetting` 是**全局对象**，已经不是启动时该用的设置了 ——
+     * 继续读它就会得到「自检跑了但没生效」的假象。
+     * `LauncherHelper.launch0()` 因此写成「自检 → `setting = profile.getVersionSetting(id)`」，
+     * 那两行不能分开。
+     *
+     * 这里写的一律是**本实例自己的设置**：开了「使用全局设置」的实例会先被切换到
+     * 游戏特定设置（`isUsesGlobal = false`），再写值，所以不会污染全局。
      *
      * @throws com.tungsten.fclcore.game.VersionNotFoundException 版本已被删掉
      */
-    private fun applyToVersion(repository: FCLGameRepository, id: String): Boolean {
+    @JvmStatic
+    fun applyToVersion(repository: FCLGameRepository, id: String): Boolean {
         // 读实例 jar 里的 version.json——加载器实例也能借此拿到真实的 MC 版本，
         // 而不是 fabric-loader 的版本号。jar 还没下载完时拿不到，跳过即可。
         val gameVersion = repository.getGameVersion(id).orElse(null) ?: return false

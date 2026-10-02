@@ -369,6 +369,37 @@ keytool -list -v -keystore harmony-fcl.jks
 （报 `Unrecognized VM option`），把输入框里的内容删掉即可，删了不会被加回；已有版本的存档里
 原本是什么就还是什么，只有新建版本才会带上新默认值。
 
+### 7.1 实例自检：两个触发点
+
+`com.mio.autofix.InstanceAutoFix` 是一套**幂等**的实例修正（版本隔离、渲染器、`-XX:UseSVE=0`），
+挂**两个**触发点：
+
+| 触发点 | 代码位置 | 范围 | 是否阻塞 |
+| --- | --- | --- | --- |
+| 打开启动器时 | `SplashActivity.enterLauncher()` → `InstanceAutoFix.applyAll()` | 全部实例 | 否（独立 IO 协程，**不 await**） |
+| **启动游戏前** | `LauncherHelper.launch0()` 任务链 → `InstanceAutoFix.applyToVersion(repo, id)` | 只处理被点的那一个 | 是（挡在启动路径上） |
+
+**为什么需要第二个**：第一个是后台协程，用户可能没等它跑完就点启动；而且启动器开着时用户还能
+手改渲染器 / JVM 参数，那不重启启动器就不会被纠正。
+
+**为什么两处不会互相打架**：同一个函数，幂等 —— 先跑的那个改完，后跑的那个没有可改的，返回 `false`。
+
+**改动这里时必须守住的一条时序约束**：
+
+`LauncherHelper` 的构造函数会把当前 `VersionSetting` 抓成字段，渲染器与 `javaArgs` 之后都从它读。
+而自检会把**开着「使用全局设置」的实例**切到游戏特定设置（`isUsesGlobal = false`）—— 切换之后，
+构造函数里抓到的那个对象（可能是全局设置）就不再是启动时该用的设置了。所以：
+
+- `setting` 字段**刻意不是 `final`**（`LauncherHelper.java`）；
+- 自检那一步跑完**紧接着**执行 `setting = profile.getVersionSetting(selectedVersion)` 重新取一次；
+  **这两行不能分开**，中间也不要插入别的东西；
+- 自检 stage（`launch.state.instance_fix`，界面文案「检查实例设置」）排在
+  `launch.state.mods` 之后、`checkGameState` 之前；渲染器与 `javaArgs` 是更靠后
+  构造 `launchOptions` / `FCLGameLauncher` 时才读的，所以这个位置是安全的。
+
+删掉那次重新取值，或把自检挪到构造 `launchOptions` / `FCLGameLauncher` 之后，
+都会造成「改了但启动时读不到」这类**静默失效**（不报错、只是不生效），排查时先看这里。
+
 ---
 
 ## 8. 自定义默认键位
@@ -434,11 +465,20 @@ id 改写后三处天然一致，代码里的默认值一个字都不用改。
 5. 授权只弹了一次（FCL 自己那次）。
 6. **渲染器分段**：新建一个 MC 26.2 的实例 → 渲染器是 **MobileGlues**；再新建一个 26.3 的
    → 自动变成 **MobileGL**，且渲染器列表里那一项显示 `>=26.3`。把 26.3 实例的渲染器手动改成
-   Zink 再重开启动器 → 应当被**改回** MobileGL（这一支刻意覆盖手选）。
-7. **26.3 实机能进游戏**（这是 MobileGL 唯一真正要证的命题）：启动 26.3 实例，确认过了
+   列表里的第一项（MobileGlues）再重开启动器 → 应当被**改回** MobileGL（这一支刻意覆盖手选）。
+7. **启动游戏前的自检（7.1 节的第二个触发点）**，这四条是新增功能的回归：
+   a. 启动游戏时，任务弹窗里应当能看到**「检查实例设置」**这一栏；
+   b. **不重启启动器**的情况下，在实例设置里把 26.3 实例的渲染器改成列表第一项（MobileGlues），
+      然后直接点启动 → 启动时应被改回 MobileGL（重新打开实例设置能确认）；
+   c. 把一个实例的 Java 改成 **jre8**（或任何 Java 8），它的 `javaArgs` 里若带着
+      `-XX:UseSVE=0` → 启动前应被删掉（否则 Java 8 会以 `Unrecognized VM option 'UseSVE'` 直接退出）；
+   d. **不能出现"改了但没生效"**：上面 b/c 两条的判定必须看**游戏实际用的**渲染器 /
+      启动指令里的 JVM 参数，而不是只看设置界面显示的值 —— 这两者不一致就说明
+      `LauncherHelper` 的 `setting` 重新取值那一步被破坏了，见 7.1 节的时序约束。
+8. **26.3 实机能进游戏**（这是 MobileGL 唯一真正要证的命题）：启动 26.3 实例，确认过了
    Mojang logo 之后**不再黑屏**。出问题先看是不是根本没加载到：`libMobileGL.so` 加载失败
    会在 logcat 里留 `dlopen failed`。
-8. **32 位包回归**：装 `armeabi-v7a` 那个包（在 64 位设备上装也有效）→ 渲染器列表里
+9. **32 位包回归**：装 `armeabi-v7a` 那个包（在 64 位设备上装也有效）→ 渲染器列表里
    **不应该出现 MobileGL**，26.3 实例会留在 MobileGlues 上。
    这一条同时也是 `canUseMobileGL()` 那个修正的回归：若换成按 `Build.SUPPORTED_ABIS` 判，
    64 位设备会报告 `arm64-v8a` 而永远为真，于是选中一个**包里根本不存在**的 `.so`。

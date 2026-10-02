@@ -123,7 +123,16 @@ public final class LauncherHelper {
     private final Profile profile;
     private final Account account;
     private final String selectedVersion;
-    private final VersionSetting setting;
+    /**
+     * 当前生效的版本设置。
+     *
+     * ⚠️ **刻意不是 `final`。** 构造函数里那次赋值拿到的可能是**全局设置**
+     * （实例还开着「使用全局设置」时 `getVersionSetting` 返回全局对象），而任务链里的
+     * `launch.state.instance_fix` 那一步会把实例切到游戏特定设置、再写渲染器与 JVM 参数。
+     * 切换之后必须重新取一次，否则后面读渲染器 / `javaArgs` 时用的还是全局对象，
+     * 自检等于白做。见 [launch0] 里那两步之间的说明。
+     */
+    private VersionSetting setting;
     private final TaskDialog launchingStepsPane;
     private double scaleFactor;
 
@@ -132,6 +141,8 @@ public final class LauncherHelper {
         this.profile = Objects.requireNonNull(profile);
         this.account = Objects.requireNonNull(account);
         this.selectedVersion = Objects.requireNonNull(selectedVersion);
+        // 只是先给个初值，让构造函数之后到 launch0 之前的任何读取都有对象可用。
+        // launch0 会在实例自检之后重新取一次——那一次才是启动真正用的设置。
         this.setting = profile.getVersionSetting(selectedVersion);
         this.launchingStepsPane = new TaskDialog(context, TaskCancellationAction.NORMAL);
         this.launchingStepsPane.setTitle(context.getString(R.string.version_launch));
@@ -174,6 +185,26 @@ public final class LauncherHelper {
                     integrityCheckRef.set(repository.unmarkVersionLaunchedAbnormally(selectedVersion));
                     return null;
                 }).withStage("launch.state.mods")
+                // 启动游戏前的实例自检。与启动器打开时那次（SplashActivity 的
+                // InstanceAutoFix.applyAll）是同一套逻辑、同一个幂等函数，区别只在范围
+                // 与时机：这里只处理被点的这一个实例，而且**挡在启动路径上**、一定跑完。
+                //
+                // 为什么必须在这里再跑一次：
+                //  1. 打开启动器那次是**不 await 的后台协程**，用户可能没等它跑完就点了启动；
+                //  2. 启动器开着的时候，用户还能在设置里手改渲染器 / JVM 参数 ——
+                //     那不重启启动器就不会被纠正。
+                //
+                // ⚠️ **下面两行与后面的 `checkGameState` 之间不能插入别的东西，
+                // 也不能删掉那次重新取值。** 自检可能把实例从「使用全局设置」切到
+                // 游戏特定设置，切换之后字段里那个对象（可能是全局设置）就不再是
+                // 启动时该用的设置了。渲染器与 `javaArgs` 是后面构造
+                // launchOptions / FCLGameLauncher 时才读的，所以这里必须用新对象。
+                .thenComposeAsync(() -> Task.composeAsync(() -> {
+                    InstanceAutoFix.applyToVersion(repository, selectedVersion);
+                    // 自检可能刚把实例切到游戏特定设置，必须重新取一次
+                    setting = profile.getVersionSetting(selectedVersion);
+                    return null;
+                }).withStage("launch.state.instance_fix"))
                 .thenComposeAsync(() -> checkGameState(context, setting, version.get()))
                 .thenComposeAsync(javaVersion -> {
                     javaVersionRef.set(Objects.requireNonNull(javaVersion));
