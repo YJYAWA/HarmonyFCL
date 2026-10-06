@@ -31,17 +31,11 @@ import androidx.core.view.forEach
 import androidx.core.view.isVisible
 import androidx.core.view.postDelayed
 import androidx.lifecycle.lifecycleScope
-import com.mio.device.VulkanCapabilities
-import com.mio.device.VulkanCheckManager
-import com.mio.device.VulkanEnsureResult
-import com.mio.device.normalizeMcVersion
-import com.mio.device.supportFor
 import com.mio.download.DownloadManager
 import com.mio.manager.RendererManager
 import com.mio.plugin.DriverPlugin
 import com.mio.promo.QuarkPromo
 import com.mio.ui.dialog.RendererSelectDialog
-import com.mio.ui.dialog.VulkanCheckDialog
 import com.mio.ui.popup.VersionSwitchPopup
 import com.mio.util.AnimUtil
 import com.mio.util.AnimUtil.Companion.interpolator
@@ -773,10 +767,11 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
             }.getOrNull() ?: DriverPlugin.driverList[0]
             refreshScreenSize()
             DisplayUtil.refreshDisplayMetrics(this)
-            // 本 fork 刻意**不**在启动路径上做 Vulkan 检测：上游 1.3.3.7 的
-            // checkVulkanThenLaunch 会在 MC 26.2+ 每次启动前真的创建 VkInstance 去探测设备能力，
-            // 而本项目的硬约束是「绝不让游戏调用 Vulkan」。
-            // 检测功能本身保留（设备能力检测与依赖下载），入口在实例设置的「检测 Vulkan」一行。
+            // 本 fork 刻意**不**在启动路径上做 Vulkan 检测。上游 1.3.3.7 在这里接了一步
+            // 自动检测：MC 26.2+ 的实例每次启动前会真的 dlopen("libvulkan.so") +
+            // vkCreateInstance 去探测设备能力（上游的 checkVulkanThenLaunch），
+            // 与本项目「任何情况下都不调用 Vulkan」的硬约束冲突，所以那一步在本 fork 里不存在。
+            // 检测功能本身完整保留，入口是实例设置里的「检测 Vulkan」一行（手动触发）。
             doLaunchVersion(selectedProfile, versionId)
         }
     }
