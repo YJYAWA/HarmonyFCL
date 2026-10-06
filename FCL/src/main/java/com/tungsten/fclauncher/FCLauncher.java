@@ -14,6 +14,7 @@ import android.system.Os;
 import android.util.ArrayMap;
 
 import com.mio.data.Renderer;
+import com.mio.device.VulkanCheckManager;
 import com.mio.plugin.DriverPlugin;
 import com.mio.plugin.FFmpegPlugin;
 import com.mio.plugin.NativeLibPlugin;
@@ -241,6 +242,11 @@ public class FCLauncher {
         }
         if (config.getUseVKDriverSystem()) {
             envMap.put("VULKAN_DRIVER_SYSTEM", "1");
+        }
+        // 检测判定设备存在可由 vkshim 补齐的驱动缺口（divisor 扩展合成 /
+        // fillModeNonSolid 降级模拟）时，经 vkshim 包装系统 Vulkan 加载器
+        if (VulkanCheckManager.INSTANCE.getNeedsVulkanShim()) {
+            envMap.put("VKSHIM_ENABLE", "1");
         }
     }
 
@@ -525,7 +531,11 @@ public class FCLauncher {
     }
 
     public static FCLBridge launchMinecraft(FCLConfig config) {
-        return launchProcess(config, FCLPath.LATEST_GAME_LOG, "Minecraft", true, true, true);
+        FCLBridge bridge = launchProcess(config, FCLPath.LATEST_GAME_LOG, "Minecraft", true, true, true);
+        // 标志先落在 bridge 实例上：launch 线程无 Looper，不能在此触碰 CallbackBridge（类初始化含 Choreographer）
+        bridge.setCleanroomActive(config.getInstalledModLoaders() != null
+                && config.getInstalledModLoaders().getInstallCleanroom());
+        return bridge;
     }
 
     public static FCLBridge launchJarExecutor(FCLConfig config) {

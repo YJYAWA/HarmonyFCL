@@ -35,14 +35,15 @@
 
 ## 本 fork 改了什么
 
-除了下面的十一项，其余代码与上游 FoldCraftLauncher 一致。逐文件的改动见
+除了下面的十三项，其余代码与上游 FoldCraftLauncher 一致。逐文件的改动见
 [`patches/fcl-embed-mobileglues.patch`](patches/fcl-embed-mobileglues.patch)。
 MobileGL 那一侧的裁剪另有一份
 [`patches/mobilegl-no-vulkan.patch`](patches/mobilegl-no-vulkan.patch)（打在上游 MobileGL 上）。
 
-「版本」一列是该项改动**首次进入本 fork 的版本**。两个版本的分界是同步上游 1.3.3.6 这件事：
+「版本」一列是该项改动**首次进入本 fork 的版本**。三次版本分界：
 `1.3.3.5`（tag [`v.1.3.3.5`](https://github.com/YJYAWA/HarmonyFCL/releases/tag/v.1.3.3.5)）
-是内嵌 MobileGlues 的第一版，`1.3.3.6` 是当前版本（`versionCode` 1337）。
+是内嵌 MobileGlues 的第一版；`1.3.3.6` 起有第 6~11 项；**当前版本 `1.3.3.7`**
+（`versionCode` 1338 = 上游 1337 + 1）同步了上游 1.3.3.7（31 个提交 / 82 个文件）。
 
 | # | 改动 | 版本 | 说明 |
 | --- | --- | --- | --- |
@@ -52,11 +53,18 @@ MobileGL 那一侧的裁剪另有一份
 | 4 | **改包名与应用名**：`com.harmony.fcl` / **Harmony FCL** | 1.3.3.5 | 与官方 FCL 共存，数据目录独立 |
 | 5 | **`-Darch` 支持架构列表**（`arm64,arm` 这样写） | 1.3.3.5 | 方便一次出多个 ABI 的包 |
 | 6 | **按 MC 版本自动匹配渲染器** | 1.3.3.6 | < 1.17 → Krypton Wrapper；1.17~26.2 → MobileGlues；≥ 26.3 → MobileGL |
-| 7 | **每次打开启动器时做一次实例自检** | 1.3.3.6 | 见 [每次启动的实例自检](#每次启动的实例自检) |
+| 7 | **每次打开启动器时做一次实例自检** | 1.3.3.6 | 见 [实例自检](#实例自检开启动器时--每次启动游戏前) |
 | 8 | **MC 26.2 起把图形后端钉死在 OpenGL** | 1.3.3.6 | 见 [MC 26.2 起的图形后端](#mc-262-起的图形后端) |
 | 9 | **MC 26.3 起换用 MobileGL** | 1.3.3.6 | 见 [MC 26.3 起的渲染器](#mc-263-起的渲染器) |
 | 10 | **修复模组源（CurseForge / Modrinth）在国内的可用性** | 1.3.3.6 | 搜索之外的接口也走镜像；详情页不再一片空白。见[模组源的镜像](#模组源的镜像) |
 | 11 | **更换全部图标** | 1.3.3.6 | 桌面图标与应用内图标都换成镐子，和官方 FCL 区分开 |
+| 12 | **启动游戏前也跑一次实例自检** | 1.3.3.7 | 见 [实例自检](#实例自检开启动器时--每次启动游戏前) |
+| 13 | **修复远古版本（1.16 及更早）启动不了** | 1.3.3.7 | `-XX:UseSVE=0` 的判据原来依赖"jre8 装没装"，见 [默认 JVM 参数](#默认-jvm-参数) 的 7.2 节 |
+
+**另外有一项是「上游加了、本 fork 刻意不用」**：上游 1.3.3.7 的 Vulkan 设备能力检测
+（`com.mio.device.*`，含一个会真的创建 `VkInstance` 的
+`vulkan_checker.c`）。本 fork **把它的自动检测从启动路径上摘掉了**，只保留实例设置里
+手动点的那一次 —— 理由见 [它**不会**做什么](#它不会做什么)。
 
 > 默认键位**没有**改动，用的就是 FCL 上游自带的 `Default` 布局，见[默认键位](#默认键位)。
 
@@ -248,6 +256,16 @@ shader 链路是 `GLSL → glslang → SPIR-V → SPIRV-Cross → ESSL`，**宿�
   `libvulkan.so` 不进 `DT_NEEDED`（容器里有没有这个文件都不影响加载）、后端硬锁
   `DirectGLES`、诊断入口 `DriverPost` 一并摘除。见
   [MC 26.3 起的渲染器](#mc-263-起的渲染器)。
+- **启动路径上不做 Vulkan 检测。** 上游 1.3.3.7 新增了一套 Vulkan 设备能力检测
+  （`com.mio.device.*`），并且把它**接进了启动流程**：MC 26.2+ 的实例每次启动前，
+  `MainActivity.checkVulkanThenLaunch` 会调 `VulkanCheckManager.ensureSupported`，
+  必要时还会执行一次真实检测 —— 那个检测会 `dlopen("libvulkan.so")`、
+  **创建 `VkInstance`**、枚举物理设备。本 fork **把这一段从启动路径上摘掉了**
+  （`MainActivity` 里那四个函数已删除，直接走 `doLaunchVersion`），
+  因为本项目的硬约束是**任何情况下都不调用 Vulkan**。
+  检测功能本身完整保留：实例设置里的「检测 Vulkan」一行照旧可以手动触发，
+  `libvulkan_check.so` 也照常随包分发，`vulkan_check_launcher_tip` / 缺失依赖提示等 UI 都在。
+  与上游行为唯一的分歧就是「不自动跑」。
 - **不覆盖 FCL 自带的其它渲染器。** Nggl4es / GL4ES / VirGL / VGPU / Zink / Freedreno 都还在，
   可以手动选。
 

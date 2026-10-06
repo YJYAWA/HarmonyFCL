@@ -31,11 +31,17 @@ import androidx.core.view.forEach
 import androidx.core.view.isVisible
 import androidx.core.view.postDelayed
 import androidx.lifecycle.lifecycleScope
+import com.mio.device.VulkanCapabilities
+import com.mio.device.VulkanCheckManager
+import com.mio.device.VulkanEnsureResult
+import com.mio.device.normalizeMcVersion
+import com.mio.device.supportFor
 import com.mio.download.DownloadManager
 import com.mio.manager.RendererManager
 import com.mio.plugin.DriverPlugin
 import com.mio.promo.QuarkPromo
 import com.mio.ui.dialog.RendererSelectDialog
+import com.mio.ui.dialog.VulkanCheckDialog
 import com.mio.ui.popup.VersionSwitchPopup
 import com.mio.util.AnimUtil
 import com.mio.util.AnimUtil.Companion.interpolator
@@ -543,7 +549,7 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
                     val version = Profiles.getSelectedProfile().selectedVersion
                     if (version == null) {
                         refreshMenuView(null)
-                        title.setTextWithAnim(getString(R.string.version))
+                        // 标题动画由 pageSelectedListener 的版本页分支统一触发，此处不再重复调用
                         uiManager.switchUI(uiManager.versionUI)
                     } else {
                         title.setTextWithAnim(getString(R.string.manage))
@@ -707,12 +713,12 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
         binding.apply {
             if (view === account && uiManager.currentUI !== uiManager.accountUI) {
                 refreshMenuView(null)
-                title.setTextWithAnim(getString(R.string.account))
+                // 标题动画由 pageSelectedListener 的账户页分支统一触发，此处不再重复调用
                 uiManager.switchUI(uiManager.accountUI)
             }
             if (view === versionCard && uiManager.currentUI !== uiManager.versionUI) {
                 refreshMenuView(null)
-                title.setTextWithAnim(getString(R.string.version))
+                // 标题动画由 pageSelectedListener 的版本页分支统一触发，此处不再重复调用
                 uiManager.switchUI(uiManager.versionUI)
             }
             if (view === back) {
@@ -767,8 +773,16 @@ class MainActivity : FCLActivity(), OnSelectListener, View.OnClickListener {
             }.getOrNull() ?: DriverPlugin.driverList[0]
             refreshScreenSize()
             DisplayUtil.refreshDisplayMetrics(this)
-            Versions.launch(this, selectedProfile, versionId)
+            // 本 fork 刻意**不**在启动路径上做 Vulkan 检测：上游 1.3.3.7 的
+            // checkVulkanThenLaunch 会在 MC 26.2+ 每次启动前真的创建 VkInstance 去探测设备能力，
+            // 而本项目的硬约束是「绝不让游戏调用 Vulkan」。
+            // 检测功能本身保留（设备能力检测与依赖下载），入口在实例设置的「检测 Vulkan」一行。
+            doLaunchVersion(selectedProfile, versionId)
         }
+    }
+
+    private fun doLaunchVersion(profile: Profile, versionId: String?) {
+        Versions.launch(this, profile, versionId)
     }
 
     private fun setupAccountDisplay() {

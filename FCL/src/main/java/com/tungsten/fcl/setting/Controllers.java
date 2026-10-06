@@ -63,10 +63,13 @@ public class Controllers {
                     if (DEFAULT_CONTROLLER == null) {
                         DEFAULT_CONTROLLER = Controller.parseLightweight(dest);
                     }
+                    // 必须同步写盘：异步保存未落盘前磁盘上没有布局文件，紧随的扫描会拿到空结果，
+                    // 后续兜底逻辑会反复触发保存与清理
+                    DEFAULT_CONTROLLER.saveToDiskSync();
                 } catch (IOException | JsonParseException e) {
                     Logging.LOG.log(Level.SEVERE, "Failed to generate default controller!", e.getMessage());
                 }
-                controllers.addAll(getControllersFromDisk());
+                addControllersFromDisk();
             }
         }
     }
@@ -110,13 +113,28 @@ public class Controllers {
             if (initialized)
                 return;
 
-            controllers.addAll(getControllersFromDisk());
+            addControllersFromDisk();
             checkControllers();
 
             initialized = true;
         }
         CALLBACKS.forEach(callback -> Schedulers.androidUIThread().execute(callback));
         CALLBACKS.clear();
+    }
+
+    /**
+     * 把磁盘上的布局并入 [controllers]，**按 id 去重**。
+     *
+     * 上游在 1.3.3.7 引入：`checkControllers()` 与 `init()` 都可能触达磁盘，
+     * 直接 `addAll` 会在两边都跑过时把同一个布局加进去两次。
+     */
+    private static void addControllersFromDisk() {
+        for (Controller controller : getControllersFromDisk()) {
+            boolean exist = controllers.stream().anyMatch(it -> it.getId().equals(controller.getId()));
+            if (!exist) {
+                controllers.add(controller);
+            }
+        }
     }
 
     private static ArrayList<Controller> getControllersFromDisk() {

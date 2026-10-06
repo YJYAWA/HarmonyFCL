@@ -138,8 +138,8 @@ android {
         //   versionName 与上游同步（FCL 自身有基于 versionName 的解析，不能自作主张）
         //   versionCode 取上游 +1，与官方包区分开——本 fork 包名是 com.harmony.fcl，
         //   本就可与官方版共存，versionCode 只用于自己这边的升级判定
-        versionCode = 1337
-        versionName = "1.3.3.6"
+        versionCode = 1338
+        versionName = "1.3.3.7"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {

@@ -165,6 +165,52 @@ cp build-arm64-v8a/libMobileGL.so ../../FCL/src/main/jniLibs/arm64-v8a/
 
 ## 3. 构建 FCL
 
+### 3.0 当前基线与上游同步记录
+
+| 项 | 值 |
+| --- | --- |
+| 上游基线 | FoldCraftLauncher tag `1.3.3.6` → `main` `6ae0051b`（= 上游 1.3.3.7） |
+| 同步范围 | 31 个提交 / 82 个文件 |
+| 本 fork 自身版本 | `versionName` 1.3.3.7，`versionCode` **1338**（上游 1337 + 1） |
+
+**这台机器上 `git fetch upstream` 走不通** —— 上游仓库 1.56 GB，无论用不用代理都会在
+传输中途被掐断（`RPC failed; curl 56 ... server closed abruptly` / `early EOF`），
+浅层 `--depth=50`、`--deepen=600` 也一样。可行的同步方式是：
+
+1. 用 GitHub API 拿 `compare/1.3.3.6...main`（`https://api.github.com/repos/FCL-Team/FoldCraftLauncher/compare/1.3.3.6...main`）
+   得到改动文件清单与 base/head 两个 SHA；
+2. 下载 tarball：`https://codeload.github.com/FCL-Team/FoldCraftLauncher/tar.gz/<head-sha>`（354 MB）；
+3. 对每个改动文件，用 `raw.githubusercontent.com/<repo>/<sha>/<path>` 取 base 与 main 两份，
+   再与工作区比对，分成四类处置。
+
+**比对时必须做行尾归一化**：本仓库在 Windows 上是 CRLF 检出，而 `raw` 给的是 LF，
+逐字节比会把每个文本文件都误判成"双边都改"（本次第一轮就因此得出 62 个假冲突，
+归一化后只剩 6 个）。这四类是：
+
+| 类别 | 判定 | 处置 |
+| --- | --- | --- |
+| TAKE | 我们 == base，main 不同 | 直接取上游版本 |
+| ADD | 上游新增、本地没有 | 直接取上游版本 |
+| SKIP | 我们 == main | 跳过 |
+| CONFLICT | 两边都改了 | 用 `git merge-file ours base main` 三方合并 |
+
+本次结果：TAKE 61 / ADD 15 / SKIP 0 / CONFLICT 6。6 个冲突里 4 个三方合并自动干净
+（`VersionSetting.kt`、`FCLauncher.java`、`values*/strings.xml`），2 个手工：
+`FCL/build.gradle.kts`（只取上游的 versionName，其余保持 fork 的）与
+`Controllers.java`（见下）。
+
+### 3.0.1 `Controllers.java`：上游的去重与同步写盘要跟上
+
+上游 1.3.3.7 在这个文件里做了两处修复，与 fork 的「原样落盘 + 轻量解析」改动**不冲突**，
+所以要一起保留：
+
+- **`saveToDiskSync()`**（替换 `saveToDisk()`）：异步保存未落盘前磁盘上没有布局文件，
+  紧随的扫描会拿到空结果，后续兜底逻辑会反复触发保存与清理；
+- **`addControllersFromDisk()`**（新增，按 id 去重）：`checkControllers()` 与 `init()`
+  都可能触达磁盘，直接 `addAll` 会把同一个布局加两次。
+
+### 3.1 构建
+
 ```bash
 export JAVA_HOME=/path/to/jdk-17
 ./gradlew :FCL:assembleRelease -Darch=arm64,arm
@@ -283,9 +329,36 @@ $BIN/llvm-readelf -d /tmp/apkcheck/libmobileglues.so | grep NEEDED
 
 # 包名 / versionCode / ABI / 桌面名
 $ANDROID_HOME/build-tools/35.0.0/aapt2 dump badging HarmonyFCL-1.3.3.6-arm64-v8a.apk
-#   → package: name='com.harmony.fcl' versionCode='1337' versionName='1.3.3.6'
+#   → package: name='com.harmony.fcl' versionCode='1338' versionName='1.3.3.7'
 #     application-label:'Harmony FCL'   native-code: 'arm64-v8a'
 ```
+
+### 4.1 上游 1.3.3.7 的 Vulkan 检测：**已从启动路径摘掉**
+
+上游 1.3.3.7 新增了一套 Vulkan 设备能力检测，并且**把它接进了启动流程**：
+
+```
+MainActivity.launchVersion
+  → checkVulkanThenLaunch(profile, versionId)          ← 上游新增，在启动路径上
+      → VulkanCheckManager.ensureSupported(...)
+      → 必要时 VulkanCheckManager.check(...) → libvulkan_check.so
+                                              → dlopen("libvulkan.so")
+                                              → vkCreateInstance / vkEnumeratePhysicalDevices
+```
+
+`FCL/src/main/jni/vulkan_check/vulkan_checker.c` **会真的创建 `VkInstance`**。这与本项目
+「任何情况下都不调用 Vulkan」的硬约束直接冲突，所以本 fork：
+
+- **删掉**了 `MainActivity` 里那四个只服务自动检测的函数
+  （`checkVulkanThenLaunch` / `promptVulkanCheck` / `runVulkanCheckAndDecide` / `decideVulkanLaunch`），
+  启动路径直接走 `doLaunchVersion`；
+- **保留**检测能力本身：`com.mio.device.*`、`VulkanCheckDialog`、`libvulkan_check.so`、
+  依赖下载、以及实例设置里手动触发的「检测 Vulkan」一行（`VersionSettingPage.checkVulkan()`）
+  全部照旧。用户在设置里主动点，才会真的去探测。
+
+**回归检查**：在 `MainActivity.kt` 里搜 `VulkanCheckManager` 应当**没有任何命中**
+（它只在 `VersionSettingPage` 与 `FCLauncher` 的 shim 判定里出现）。
+启动一个 MC 26.2+ 实例时**不应**出现任何 Vulkan 检测对话框。
 
 ---
 
@@ -468,6 +541,18 @@ id 改写后三处天然一致，代码里的默认值一个字都不用改。
 ## 9. 已知限制与实机验证清单
 
 ### 已知限制
+
+- **⚠️ `:FCL:testReleaseUnitTest` 现在是红的（2 个失败），但这与上游同步无关。**
+  `com.mio.controlconverter.ControlConverterTest` 的 `goldenFclToZlByteMatch` 与
+  `goldenFclToZlSemanticMatch` 失败：金样期望摇杆 `deadZoneRatio = 0.5`、`canLock = true`，
+  实际得到 `0.0` / `false`。
+  根因是**金样与输入对不上**：`test_fcl_layout.json` 里**根本没有** `deadZone` / `canLock` 键，
+  而 `CcDirection.kt` 是从事件里读它们的（缺失就走 `clampRange` 的默认值 0.0 / falsy）。
+  这四个文件（两个测试资源、`ControlConverterTest.kt`、`CcDirection.kt`）最后一次改动都是
+  本 fork 的**第一个提交** `d56707ab`（2026-09-27），上游 1.3.3.7 也没碰 `controlconverter`。
+  已用 `git worktree` 在同步前的 HEAD 上复跑确认**同样失败**。
+  **出包时用 `-x testReleaseUnitTest` 跳过它**（`assembleRelease` 会依赖这个任务，
+  不跳过的话包根本出不来）。要修得重新生成金样或补齐输入，属于另一件事。
 
 - **没有条件做真机回归。** 已完成的验证是源码级断言与产物级检查（见第 4 节），
   以及包名 / ABI / 版本号 / 桌面名 / 内置资产 / FileProvider authority 的核对。
