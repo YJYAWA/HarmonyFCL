@@ -400,6 +400,41 @@ keytool -list -v -keystore harmony-fcl.jks
 删掉那次重新取值，或把自检挪到构造 `launchOptions` / `FCLGameLauncher` 之后，
 都会造成「改了但启动时读不到」这类**静默失效**（不报错、只是不生效），排查时先看这里。
 
+### 7.2 `-XX:UseSVE=0` 的判据：**绝不能看"装了哪个 Java"**
+
+`-XX:UseSVE=0` 只在 aarch64 的 **JDK 17+** 上存在。Java 8 见到它会在初始化阶段就报
+`Unrecognized VM option 'UseSVE'` 退出，而 [VersionSetting.DEFAULT_JAVA_ARGS] 是**无条件**
+带这个参数的 —— 所以**任何用 Java 8 的实例开箱必崩**，这就是「远古版本（1.16 及更早）
+点启动直接退出」的根因。
+
+判据是 `InstanceAutoFix.effectiveJavaMajor(declaredMajor, explicitJavaName)`：
+
+| 情况 | 判定 |
+| --- | --- |
+| `version.json` 声明了 `javaVersion`（1.17+） | 用声明值 |
+| `version.json` **没有** `javaVersion`（1.16 及更早） | **按 Java 8 算** |
+| 实例设置里显式选了 `jre8/17/21/25` | 用该 JRE 的版本（**盖过声明值**） |
+| 显式选的名字不在这四个里 | **未知 → 当"要删"处理** |
+
+**为什么不能走 `JavaManager.getSuitableJavaVersion`：** 它会在目标 Java **没装**时
+回落到「已装的第一个 Java」。远古版本没有 `javaVersion` 字段，于是
+
+```
+getSuitableJavaVersion(null) → getJavaFromVersionName("jre8")
+    → jre8 没装时返回 javaList.first()（例如 jre17）→ 报出主版本 17
+    → 判成「支持 UseSVE」→ 参数被留下 → Java 8 启动崩
+```
+
+也就是说，**判据一旦依赖"jre8 装没装"，远古版本就会时好时坏**。正确语义是
+「这个版本要求的 Java」，与装没装无关。
+
+**代价不对称，所以未知一律"要删"：** 多删一次只是少一个 SVE 优化（SVE 在麒麟上本来
+就要关，且只是性能选项）；漏删是**直接启动失败**。`UNKNOWN_JAVA_MAJOR` 取 `-1` 正是
+为了让未知落进 `major < 17` 那一支 —— **不要把它改成正值**，那会把策略反过来。
+
+回归测试：`FCL/src/test/java/com/mio/autofix/EffectiveJavaMajorTest.kt`（9 个用例）。
+跑法：`./gradlew :FCL:testReleaseUnitTest --tests=com.mio.autofix.*`
+
 ---
 
 ## 8. 自定义默认键位

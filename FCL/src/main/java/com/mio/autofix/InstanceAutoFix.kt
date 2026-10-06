@@ -6,6 +6,7 @@ import com.mio.manager.RendererManager
 import com.tungsten.fcl.game.FCLGameRepository
 import com.tungsten.fcl.setting.Profiles
 import com.tungsten.fcl.setting.VersionSetting
+import com.tungsten.fclcore.game.JavaVersion
 import com.tungsten.fclcore.game.Version
 import com.tungsten.fclcore.util.Logging
 import com.tungsten.fclcore.util.versioning.GameVersionNumber
@@ -48,10 +49,29 @@ object InstanceAutoFix {
 
     private const val TAG = "InstanceAutoFix"
 
-    /** 只有 aarch64 的 JDK 17+ 认识它；更老的 JDK 会拒绝启动 */
+    /** 只有 aarch64 的 JDK 17+ 认识它；更老的 JDK 会以 `Unrecognized VM option` 直接退出 */
     private const val USE_SVE = "-XX:UseSVE=0"
 
+    /**
+     * 认识 `-XX:UseSVE` 的最低 Java 主版本。
+     *
+     * ⚠️ **这个开关不是"优化"，是"能不能启动"**：Java 8 见到 `-XX:UseSVE=0` 会在
+     * 初始化阶段就报 `Unrecognized VM option 'UseSVE'` 退出。而
+     * [VersionSetting.DEFAULT_JAVA_ARGS] 是无条件带这个参数的，所以**任何用 Java 8 的实例
+     * 开箱必崩**——这正是远古版本（它们的 version.json 没有 `javaVersion` 字段，
+     * 落到 [JavaManager.getSuitableJavaVersion] 就是 Java 8）启动不了的根因。
+     */
     private const val MIN_JAVA_FOR_SVE = 17
+
+    /**
+     * 「这个实例要用哪个 Java 判不出来」的哨兵值。
+     *
+     * 取 `-1`：它比任何真实 Java 主版本都小，所以在 [needsSveRemoval] 的
+     * `major < MIN_JAVA_FOR_SVE` 里天然落到"要删"那一支——这正是我们要的"不认识就删"。
+     * 不要改成 `Int.MAX_VALUE` 或别的正值，那会把策略反过来（变成"不认识就留"，
+     * 也就是现在这个 BUG 的行为）。
+     */
+    private const val UNKNOWN_JAVA_MAJOR = -1
 
     /**
      * MobileGlues 支持的最低 MC 版本，与 `RendererManager` 里那个渲染器的 `minMCver` 必须一致。
@@ -192,8 +212,8 @@ object InstanceAutoFix {
             Logging.LOG.log(Level.INFO, "[$TAG] $id 渲染器设为 $wantRenderer（MC $gameVersion）")
         }
 
-        // UseSVE：按实际会被用到的 Java 主版本判断
-        if (javaMajorOf(vs, resolved) < MIN_JAVA_FOR_SVE) {
+        // UseSVE：只按"这个实例版本要求的 Java"判断，不按"当前装了哪个 Java"（见 javaMajorOf）
+        if (needsSveRemoval(vs, resolved)) {
             if (removeToken(vs, USE_SVE)) {
                 changed = true
                 Logging.LOG.log(Level.INFO, "[$TAG] $id 移除 $USE_SVE（Java 不支持该参数）")
@@ -289,18 +309,74 @@ object InstanceAutoFix {
     }
 
     /**
-     * 实际会被用到的 Java 主版本。
+     * 这个实例**一定会用**的 Java 主版本；判不出来时给 [UNKNOWN_JAVA_MAJOR]。
      *
-     * 与 `LauncherHelper` 的选择逻辑对齐：实例显式指定了 Java（[VersionSetting.java] 不为 `"Auto"`）
-     * 就用它；否则用 `JavaManager` 推荐的那个。
+     * ⚠️ **这里绝不能用 `JavaManager.getSuitableJavaVersion` 的结果。** 那个函数会在
+     * 目标版本没装时**回落到已装的第一个 Java**，于是「远古版本（应为 Java 8）+ 只装了
+     * jre17+」这个组合会报出 17 —— 判成"支持 UseSVE"、参数被留下，而实际启动
+     * 要么用 Java 17 跑不起来、要么用户装了 Java 8 后直接崩在 `Unrecognized VM option`。
+     * 这个坑正是"远古版本启动不了"的根因，**改动前先看这一段**。
+     *
+     * 正确的语义是**版本要求的 Java**，与装没装无关：
+     *
+     * - `version.javaVersion.majorVersion` 非空 → MC 自己声明的（1.17+ 的 version.json 都有）；
+     * - 为空 → 1.16 及更早的古老版本，一律按 `JavaVersion.JAVA_VERSION_8` 算。
+     *   `version.json` 里没有 `javaVersion` 就等价于"为 Java 8 构建"，与
+     *   `LauncherHelper.checkGameState()` 里 `getSuitableJavaVersion(null)` → `jre8` 一致。
+     *
+     * 显式指定了 Java 的实例直接看那个 Java 的版本；名字查不到（理论上不该发生）也算未知。
      */
-    private fun javaMajorOf(vs: VersionSetting, version: Version?): Int {
-        val explicit = vs.java
-        if (explicit != "Auto") {
-            JavaManager.javaList.find { it.name == explicit }?.let { return it.getVersion() }
+    private fun javaMajorOf(vs: VersionSetting, version: Version?): Int =
+        effectiveJavaMajor(version?.javaVersion?.majorVersion, vs.java)
+
+    /**
+     * [javaMajorOf] 的纯函数内核，抽出来是为了能单测——这个判据一开始就是错的
+     * （依赖"jre8 装没装"），而它判错的后果是**远古版本点启动直接崩**，
+     * 不能只靠肉眼看代码。
+     *
+     * @param declaredMajor MC 在 `version.json` 里声明的 Java 主版本；
+     *        1.16 及更早的古老版本**没有这个字段**，传 `null`。
+     * @param explicitJavaName 实例设置里选的 Java（`VersionSetting.java`），`"Auto"` 表示自动。
+     * @return 会用到的 Java 主版本；判不出来时 [UNKNOWN_JAVA_MAJOR]。
+     *
+     * 两条规则：
+     *
+     * 1. **显式指定优先**，且只看**内置的四套 JRE 名字**——不查 `JavaManager.javaList`。
+     *    故意的：查已装列表会把"用户选的 Java 没装"变成"未知"，而未知按下面
+     *    [needsSveRemoval] 的策略是要删参数的；名字认不出来就不该动用户的参数。
+     * 2. 自动选择时用**版本声明的** Java；没有声明就是 Java 8（古老版本）。
+     *    **绝不能**回落到 `JavaManager.getSuitableJavaVersion` —— 它会在 jre8 没装时
+     *    返回已装的第一个 Java（例如 17），从而把"该删的参数"判成"该留"。
+     */
+    @JvmStatic
+    fun effectiveJavaMajor(declaredMajor: Int?, explicitJavaName: String): Int {
+        if (explicitJavaName != "Auto") {
+            return when (explicitJavaName) {
+                "jre8" -> JavaVersion.JAVA_VERSION_8
+                "jre17" -> JavaVersion.JAVA_VERSION_17
+                "jre21" -> JavaVersion.JAVA_VERSION_21
+                "jre25" -> JavaVersion.JAVA_VERSION_25
+                else -> UNKNOWN_JAVA_MAJOR
+            }
         }
-        return JavaManager.getSuitableJavaVersion(version).getVersion()
+        val declared = declaredMajor ?: JavaVersion.JAVA_VERSION_8
+        return if (declared > 0) declared else UNKNOWN_JAVA_MAJOR
     }
+
+    /**
+     * 这个实例实际会不会跑在 **不认识 `-XX:UseSVE`** 的 Java 上。
+     *
+     * 判不出来时**返回 true（=要删）**，故意的：这个判据判错的两种代价完全不对称——
+     *
+     * - 多删一次：只是少一个 Java 17+ 上的 SVE 优化（SVE 在麒麟上本来就是明确要关掉的，
+     *   而且它只是性能选项，不影响正确性）；
+     * - 漏删：**Java 8 直接启动失败**，用户看到的是"点了启动没反应/闪退"。
+     *
+     * 所以宁可不认识就删。这条策略让"远古版本启动不了"不会再依赖"jre8 装没装"这种
+     * 与版本本身无关的外部状态。
+     */
+    private fun needsSveRemoval(vs: VersionSetting, version: Version?): Boolean =
+        javaMajorOf(vs, version) < MIN_JAVA_FOR_SVE
 
     /** 按 token 移除，保留用户其它参数与原有顺序；本就不在则返回 false（幂等）。 */
     private fun removeToken(vs: VersionSetting, token: String): Boolean {
