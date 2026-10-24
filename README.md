@@ -42,8 +42,9 @@ MobileGL 那一侧的裁剪另有一份
 
 「版本」一列是该项改动**首次进入本 fork 的版本**。三次版本分界：
 `1.3.3.5`（tag [`v.1.3.3.5`](https://github.com/YJYAWA/HarmonyFCL/releases/tag/v.1.3.3.5)）
-是内嵌 MobileGlues 的第一版；`1.3.3.6` 起有第 6~11 项；**当前版本 `1.3.3.7`**
-（`versionCode` 1338 = 上游 1337 + 1）同步了上游 1.3.3.7（31 个提交 / 82 个文件）。
+是内嵌 MobileGlues 的第一版；`1.3.3.6` 起有第 6~11 项；`1.3.3.7` 起有第 12~13 项；
+**当前版本 `1.3.4.0`**（`versionCode` 1341 = 上游 1340 + 1）同步了上游 1.3.4.0
+（48 个提交 / 142 个文件）。
 
 | # | 改动 | 版本 | 说明 |
 | --- | --- | --- | --- |
@@ -52,7 +53,7 @@ MobileGL 那一侧的裁剪另有一份
 | 3 | **新建版本的默认 JVM 参数改为 `-XX:+UnlockExperimentalVMOptions -XX:UseSVE=0`** | 1.3.3.5 | 见 [默认 JVM 参数](#默认-jvm-参数) |
 | 4 | **改包名与应用名**：`com.harmony.fcl` / **Harmony FCL** | 1.3.3.5 | 与官方 FCL 共存，数据目录独立 |
 | 5 | **`-Darch` 支持架构列表**（`arm64,arm` 这样写） | 1.3.3.5 | 方便一次出多个 ABI 的包 |
-| 6 | **按 MC 版本自动匹配渲染器** | 1.3.3.6 | < 1.17 → Krypton Wrapper；1.17~26.2 → MobileGlues；≥ 26.3 → MobileGL |
+| 6 | **按 MC 版本自动匹配渲染器（三档强制）** | 1.3.3.6 / 1.3.4.0 | **1.17.1 及更早**（含 Pre-Classic / Classic / Indev / Infdev / Alpha / Beta）→ Krypton Wrapper；**1.18 ~ 26.2** → MobileGlues；**≥ 26.3** → MobileGL。1.3.4.0 起下界由 1.17 抬到 1.18，且三档都覆盖手选 |
 | 7 | **每次打开启动器时做一次实例自检** | 1.3.3.6 | 见 [实例自检](#实例自检开启动器时--每次启动游戏前) |
 | 8 | **MC 26.2 起把图形后端钉死在 OpenGL** | 1.3.3.6 | 见 [MC 26.2 起的图形后端](#mc-262-起的图形后端) |
 | 9 | **MC 26.3 起换用 MobileGL** | 1.3.3.6 | 见 [MC 26.3 起的渲染器](#mc-263-起的渲染器) |
@@ -74,10 +75,10 @@ MobileGL 那一侧的裁剪另有一份
 | --- | --- |
 | 包名 | `com.harmony.fcl` |
 | 桌面显示名 | **Harmony FCL** |
-| 版本 | `1.3.3.6`（`versionCode` 1337 = 上游 + 1） |
+| 版本 | `1.3.4.0`（`versionCode` 1341 = 上游 1340 + 1） |
 | 产物名 | `HarmonyFCL-<版本>-<abi>.apk`，每个 ABI 一个包 |
 | 签名 | 自签名，**密钥不随仓库分发**（见[签名密钥](#签名密钥)） |
-| 上游基线 | FoldCraftLauncher tag `1.3.3.6` / MobileGlues `2.0.0` |
+| 上游基线 | FoldCraftLauncher `1.3.4.0` / MobileGlues `2.0.0` |
 
 包名与官方 FCL（`com.tungsten.fcl`）**不同**，所以**不需要先卸载官方版**：两者可以共存，
 数据目录也各自独立（`Android/data/com.harmony.fcl`）。
@@ -137,16 +138,24 @@ MobileGL 那一侧的裁剪另有一份
 | 项 | 行为 |
 | --- | --- |
 | **版本隔离** | **强制开启**（游戏目录落在 `.minecraft/versions/<id>/`）。这是刻意的——你在实例设置里关掉，下次打开启动器会被改回来。 |
-| **渲染器** | MC < 1.17 强制 Krypton Wrapper；MC ≥ 26.3 强制 MobileGL；1.17 ~ 26.2 只在它被留成 Krypton Wrapper 时改回 MobileGlues，**你手选的 Zink / Virgl / GL4ES 一律保留**。 |
+| **渲染器** | **三档强制，覆盖你的手选**：**1.17.1 及更早**（含 Pre-Classic / Classic / Indev / Infdev / Alpha / Beta）→ Krypton Wrapper；**1.18 ~ 26.2** → MobileGlues；**≥ 26.3** → MobileGL。 |
 | **`-XX:UseSVE=0`** | 该实例实际会用的 Java 主版本 < 17 时，从它的 `javaArgs` 里删掉这一项。 |
 
 **为什么渲染器要按版本切**：这几个渲染器的 `minMCver` 不是"仅显示"，启动时
 `checkRenderer` 会拿它和实际 MC 版本比，**超出范围就弹一个不可取消的对话框**
-（点「取消」直接中止启动），每次启动都弹一次。MobileGlues 的 `minMCver` 是 `1.17`，
-MobileGL 的是 `26.3`；Krypton Wrapper 没有下界、MobileGlues 与 MobileGL 都没有上界，
-所以三支正好无缝覆盖全部版本——连 1.0 都不会缺渲染器。
+（点「取消」直接中止启动），每次启动都弹一次。MobileGlues 的 `minMCver` 是 `1.18`
+（1.3.4.0 起由 `1.17` 抬上来），MobileGL 的是 `26.3`；Krypton Wrapper 没有下界、
+MobileGlues 与 MobileGL 都没有上界，所以三档正好无缝覆盖全部版本——连 2009 年的
+`c0.30_01c` 都不会缺渲染器。
 
-**26.3 那一支刻意无视你的手选**，因为留在 MobileGlues 上是必然黑屏，不是偏好问题。
+**1.3.4.0 起三档都无视你的手选**：1.17.1 及更早留在 MobileGlues 上会被弹窗拦，
+26.3 起留在 MobileGlues 上过 Mojang logo 后必然黑屏——两者都不是偏好问题。
+
+**版本名认不出时按「远古」处理**（Krypton Wrapper），这是刻意的兜底方向：
+`GameVersionNumber` 对 `0.0.14a` / `Java版2.0` / `Cave game tech test` 这类名字既不报错
+也不抛异常，而是造一个「比谁都新」的对象，落到它手上会被判成 ≥ 26.3 而选到 MobileGL。
+Krypton Wrapper 没有下界、永远不会触发越界弹窗，猜错最坏只是渲染慢一点。
+
 32 位包（`armeabi-v7a`）里没有 `libMobileGL.so`，所以那种包不会切到 MobileGL：
 `RendererManager.canUseMobileGL()` 查的是**本进程实际加载 `.so` 的目录里有没有这个文件**，
 判不通过就维持 MobileGlues。
@@ -354,8 +363,11 @@ MobileGL 在 [`third_party/MobileGL/`](third_party/MobileGL/)，构建命令见 
   黑屏。手动去渲染器列表里选 MobileGL 能绕过自动判定，但 `checkRenderer` 每次启动都会
   弹一次提示（MobileGL 的 `minMCver` 是 `26.3`），点「继续」才进得去游戏。
   这是划粗线的代价，不是漏判。要收进来就把 `RendererManager.RENDERER_MOBILEGL` 的
-  `minMCver`、`InstanceAutoFix.MOBILEGL_MIN_MC` 和 `Renderer.kt` 的注释一起改成
+  `minMCver`、`InstanceAutoFix.classify()` 里 `26.3` 那一支的判据和 `Renderer.kt` 的注释一起改成
   `26.3-snapshot-1`，测试里的 `26_3 的快照排在正式版之前` 也要一并改。
+- **版本名完全认不出的实例会走 Krypton Wrapper。** 自造的实例 id（比如 `我的整合包`）或
+  资料里的非常规写法都认不出，兜底方向刻意选了「当远古」——Krypton Wrapper 没有下界、
+  不会弹越界提示。要精确控制就把实例的 MC 版本填成标准版本号。
 - `.so` 的页对齐是 4KB。与 FCL 上游自带的 `libgl4es_114.so` 等一致；若将来系统切到 16KB 页，
   需要给它们一起加 `-Wl,-z,max-page-size=16384` 重新构建。
 - **文件 CDN 没法镜像。** 镜像只代理 API；对文件请求它做的只是 302 回原站

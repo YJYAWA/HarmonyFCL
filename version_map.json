@@ -1,20 +1,20 @@
 [
   {
     "type": "release",
-    "versionCode": 1338,
-    "versionName": "1.3.3.7",
-    "date": "2026.10.05",
+    "versionCode": 1341,
+    "versionName": "1.3.4.0",
+    "date": "2026.10.15",
     "description": [
       {
         "lang": "en",
-        "text": "(Translated from Chinese by AI)\n1. Added Vulkan capability detection — device support is now verified automatically before launching 26.2+ versions, with a new \"Detect Vulkan\" entry in version settings for manual checks and per-item extension/feature dependency details; the vkshim driver layer automatically synthesizes missing Vulkan capabilities.\n2. The version list gained deep deletion, which also cleans up libraries and assets referenced only by that version; deletion progress is now shown in real time.\n3. The mod list gained sorting by name/filename/size/modification time with ascending/descending toggle, and the choice is remembered.\n4. The number seek bar gained +/- buttons on both sides, supporting tap to step and long-press to repeat.\n5. The account skin dialog's 3D preview now applies the 3D skin layer and body-leg separation switch states.\n6. Optimized mod scanning: repeated full scans of the same version are avoided, and the manage page refreshes incrementally after a mod download; the \"installed\" badge on the mod download page now matches across Modrinth and CurseForge.\n7. Fixed Forge/NeoForge/OptiFine installation freezing and being impossible to cancel; processor progress is now shown in real time and hangs are detected automatically.\n8. Fixed save errors and user layout loss caused by a controller initialization race.\n9. Fixed Quilt installation crashes, system-info initialization crashes on some devices, and incomplete error messages in SDL message boxes."
+        "text": "(Translated from Chinese by AI)\n1. The version list supports pinned favorites: entries gain a star button, pinned entries are placed first in favorite order, long-press and drag to reorder them, and pins are stored per profile.\n2. The layout manager gained a layout copy feature that pops up a dialog to edit the info and generates a random new id; the mod manager page now reloads automatically after downloads land on disk or mods are updated.\n3. Fixed the UI freezing when launching modded instances on 26.3+: the FML early-loading window is now force-disabled, as its render thread and the launcher UI used to block each other on shared graphics buffers.\n4. Fixed black bars and misaligned clicks after resizing the window at runtime under SDL rendering; the forced-resolution letterbox is now driven by layout callbacks and computed from the parent container's measured size.\n5. Fixed external keyboards being unable to type text in-game under SDL mode.\n6. Fixed old-format (64x32) skins rendering incorrectly after switching pages.\n7. Fixed the \"request highest refresh rate\" toggle crashing inside the layout editor, Modrinth entries without icons crashing the favorites page, and unknown aggregation-search category tags leaking internal key names.\n8. Favorites-page download counts are now formatted per locale (wan/yi, K/M/B); the SDL GL library path of custom renderer plugins is joined per the plugin path convention and checked for existence."
       },
       {
         "lang": "zh_CN",
-        "text": "(若启动器内下载缓慢请使用网盘下载,64位的请下载arm64，不知道该下哪个的请下载all）\n1.新增 Vulkan 能力检测，启动 26.2+ 版本前自动校验设备支持情况，版本设置页新增\"检测 Vulkan\"入口可手动检测并查看逐项扩展/特性依赖；vkshim 驱动层自动合成缺失的 Vulkan 能力\n2.版本列表新增深度删除，可一并清理仅被该版本引用的库与资源文件，删除过程实时显示进度\n3.模组列表新增排序，支持按名称/文件名/大小/修改时间升降序排列，选择自动记忆\n4.数值调节条左右新增加减按钮，支持点按步进与长按连发\n5.账户皮肤对话框 3D 预览同步应用 3D 皮肤层与身体腿部分离开关状态\n6.模组扫描性能优化，同一版本避免重复全量扫描，下载模组后管理页自动增量刷新；模组下载页\"已安装\"标记支持 Modrinth 与 CurseForge 跨源匹配\n7.修复 Forge/NeoForge/OptiFine 安装卡死且无法取消的问题，安装过程实时显示处理器进度，挂起自动检测收敛\n8.修复控制器初始化竞态导致的保存报错与用户布局丢失\n9.修复 Quilt 安装崩溃、部分设备系统信息初始化崩溃、SDL 消息框错误信息显示不全等问题"
+        "text": "(若启动器内下载缓慢请使用网盘下载,64位的请下载arm64，不知道该下哪个的请下载all）\n1.版本列表支持收藏置顶：条目新增星标收藏，置顶项按收藏顺序前置，长按拖拽调整置顶顺序，数据按配置文件隔离\n2.布局管理页新增布局复制功能，复制时弹框编辑信息并生成随机新 id；模组管理页在下载落盘或模组更新后自动刷新列表\n3.修复 26.3+ 部分模组启动时 UI 冻死：强制关闭 FML 早期加载屏，其渲染线程与启动器界面曾在图形缓冲上互相阻塞\n4.修复 SDL 渲染下运行时调整窗口尺寸后画面黑边与点击错位；强制分辨率黑边改由布局回调驱动、按父容器实测尺寸计算\n5.修复 SDL 模式下外置键盘无法在游戏内输入文本\n6.修复旧格式（64x32）皮肤切换页面后渲染错乱\n7.修复布局编辑页内开关\"请求最高刷新率\"崩溃、Modrinth 无图标项目进收藏页崩溃、聚合搜索未知分类标签泄漏内部键名\n8.收藏页下载量按语言环境换算显示（万/亿、K/M/B）；自定义渲染器插件的 SDL GL 库路径按插件约定拼接并校验存在性"
       }
     ],
-    "netdiskUrl": "https://pan.quark.cn/s/bcb708440285",
-    "url": "https://github.com/FCL-Team/FoldCraftLauncher/releases/download/1.3.3.7/FCL-release-1.3.3.7-all.apk"
+    "netdiskUrl": "https://pan.quark.cn/s/8d761a2e88aa",
+    "url": "https://github.com/FCL-Team/FoldCraftLauncher/releases/download/1.3.4.0/FCL-release-1.3.4.0-all.apk"
   }
 ]

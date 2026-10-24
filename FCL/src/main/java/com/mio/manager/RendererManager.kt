@@ -126,7 +126,8 @@ object RendererManager {
             null,
             null,
             Renderer.ID_MOBILEGLUES,
-            "1.17",
+            // 1.3.4.0 起下界由 1.17 改为 1.18：1.17.1 及更早一律 Krypton Wrapper
+            "1.18",
             ""
         )
 

@@ -30,9 +30,10 @@ import java.util.logging.Level
  * 2. **版本隔离常开。** 本 app 的既定行为就是游戏目录落在 `versions/<id>/`，
  *    所以这里是**强制打开**而非"设默认值"——用户改过也会在下次启动时被改回来。
  *
- * 3. **渲染器按 MC 版本三选一。** 见 [rendererFor]：低于 1.17 钉死 Krypton Wrapper；
- *    26.3 及以上换成 MobileGL（MobileGlues 在该区间过 Mojang logo 后黑屏）；
- *    中间的 1.17~26.2 只纠正"被留成 Krypton Wrapper"的情况，用户手选的其它渲染器保留。
+ * 3. **渲染器按 MC 版本三档强制映射。** 见 [rendererFor]：**1.17.1 及更早**（含
+ *    Pre-Classic / Classic / Indev / Infdev / Alpha / Beta）钉死 Krypton Wrapper；
+ *    **1.18 ~ 26.2** 用 MobileGlues；**26.3 及以上**换成 MobileGL
+ *    （MobileGlues 在该区间过 Mojang logo 后黑屏）。三档都覆盖用户手选。
  *
  * 4. **`-XX:UseSVE=0` 与老 JDK 不兼容。** 这个参数是 aarch64 专有的，JDK 17 才引入；
  *    Java 8 见到它会以 `Unrecognized VM option 'UseSVE'` 直接退出。而
@@ -73,36 +74,13 @@ object InstanceAutoFix {
      */
     private const val UNKNOWN_JAVA_MAJOR = -1
 
-    /**
-     * MobileGlues 支持的最低 MC 版本，与 `RendererManager` 里那个渲染器的 `minMCver` 必须一致。
-     *
-     * 这个值不是"仅显示"：`LauncherHelper.checkRenderer()` 拿它和实际 MC 版本比，
-     * **超出范围就弹一个 `setCancelable(false)` 的对话框**——每次启动都弹一次，
-     * 点"取消"直接中止启动。所以低于 1.17 的实例绝不能留着 MobileGlues。
-     */
-    private const val MOBILEGLUES_MIN_MC = "1.17"
-
-    /**
-     * MobileGL 支持的最低 MC 版本，与 `RendererManager` 里那个渲染器的 `minMCver` 必须一致。
-     *
-     * 26.3 起 MC 的 OpenGL 路径改用 ShaderC 编译 shader，MobileGlues 在这个区间会过
-     * Mojang logo 后黑屏。和上面同一个道理：这个值不是"仅显示"，`checkRenderer` 拿它
-     * 做上下界判断，**超出范围就弹一个 `setCancelable(false)` 的对话框**，
-     * 所以低于 26.3 的实例绝不能留着 MobileGL。
-     *
-     * ⚠️ **26.3 的快照 / rc 不算"≥ 26.3"。** `GameVersionNumber.Release` 的 `ReleaseType`
-     * 序数是 `UNKNOWN < SNAPSHOT < PRE_RELEASE < RC < GA`，所以 `26.3-snapshot-3` 排在
-     * `26.3` **之前**——这些实例会走 1.17~26.2 那一支，留在 MobileGlues 上。
-     *
-     * 这是刻意划粗线：`minMCver` 除了当判据，还会被 `RendererSelectItemAdapter` 原样显示成
-     * `>=26.3`，要连快照一起收进来就得写成 `26.3-snapshot-1`，让用户读到一串他没见过的
-     * 版本号；而究竟从哪个快照开始黑屏并没有查实（快照 2 加 OIT、快照 4 换 SDL3、
-     * 快照 5 才把 shader 编译切到 ShaderC），凭猜定边界不如划一条粗但明确的线。
-     *
-     * 副作用见 README「已知限制」：26.3 快照的用户留在 MobileGlues 上是黑屏，手选 MobileGL
-     * 能绕过这里，但 `checkRenderer` 每次启动都会弹一次提示，得点「继续」。要改先改 README。
-     */
-    private const val MOBILEGL_MIN_MC = "26.3"
+    // 渲染器三个档位的两个分界点：**1.18** 和 **26.3**。
+    //
+    // 这两个数字在别处还有两份，改动时必须一起改（见 [rendererFor] 与 [classify] 的说明）：
+    //   - `RendererManager` 里 MobileGlues 的 `minMCver = "1.18"`、MobileGL 的 `minMCver = "26.3"`；
+    //   - `LauncherHelper.checkRenderer()` 拿这两个值和实际 MC 版本比，**超出范围就弹一个
+    //     `setCancelable(false)` 的对话框**，点"取消"直接中止启动。
+    // 所以档位判错不是"渲染器选得不好"，是"每次启动被拦一次"或"过 Mojang logo 后黑屏"。
 
     /**
      * 全量入口：挂在 `SplashActivity.enterLauncher()` 里 `ConfigHolder.init()` 之后，
@@ -226,39 +204,159 @@ object InstanceAutoFix {
     /**
      * MC 版本 + 当前取值 → 该实例应有的渲染器 ID。
      *
-     * 三支，判错的代价不一样：
+     * **三档强制映射，覆盖用户手选**（1.3.4.0 起，按用户指定的分段改掉旧逻辑）：
      *
-     * - **低于 1.17 一律钉死 Krypton Wrapper。** MobileGlues 的 `minMCver` 是 1.17，留着它会让
-     *   `checkRenderer` 每次启动都弹一个 `setCancelable(false)` 的对话框，点"取消"直接中止启动。
-     * - **26.3 及以上一律换成 MobileGL。** 26.3 起 MC 的 OpenGL 路径改用 ShaderC 编译 shader
-     *   （与 Vulkan 同一套），MobileGlues 在这个区间过 Mojang logo 后黑屏。这一支**刻意覆盖
-     *   用户的手选**：留在 MobileGlues 上是必然黑屏，不是偏好问题。
-     *   注意 26.3 的**快照 / rc 排序在正式版之前**，走的是下面那一支，见 [MOBILEGL_MIN_MC]。
-     * - **1.17 ~ 26.2 只纠正"被留成 Krypton Wrapper"这一种情况。** 全局默认本来就是 MobileGlues，
-     *   正常实例无需干预；用户刻意选的 Zink / Virgl / GL4ES 一律**原样返回**，
-     *   不能每次启动都给人改回去。
+     * | MC 版本 | 渲染器 |
+     * | --- | --- |
+     * | 1.17.1 及更早（含 Pre-Classic / Classic / Indev / Infdev / Alpha / Beta / 1.0–1.17.1） | **Krypton Wrapper** |
+     * | 1.18 ~ 26.2（含） | **MobileGlues** |
+     * | 26.3 及以上 | **MobileGL** |
      *
-     * 边界值逐字对齐 `LauncherHelper.checkRenderer` 的 `compare(version, minMCver) < 0`
-     * 与 `compare(version, maxMCver) > 0`（相等都不算越界）。Krypton Wrapper 的 `minMCver`
-     * 是空串、MobileGlues 与 MobileGL 的 `maxMCver` 都是空串，所以三支无缝覆盖全部版本，
-     * 老到 1.0 也不会缺渲染器。
+     * 为什么远古版本要钉死 Krypton Wrapper：MobileGlues 的 `minMCver` 是 1.18，
+     * 留着它会让 `checkRenderer` 每次启动弹一个 `setCancelable(false)` 的对话框，
+     * 点"取消"直接中止启动。
+     *
+     * 为什么 26.3 起要换 MobileGL：26.3 的 OpenGL 路径改用 ShaderC 编译 shader
+     * （与 Vulkan 同一套），MobileGlues 在这个区间过 Mojang logo 后黑屏。
+     *
+     * ⚠️ **判据必须能容忍"认不出的版本名"，而且兜底方向必须是远古。**
+     * `GameVersionNumber` 对 `0.0.14a` / `Beta 1.7.3` / `Cave game tech test` / `Java版2.0`
+     * 这类名字既不抛异常也不报错，而是造一个 `Special` 且 `prev == null`；这种
+     * `Special.isUnknown()` 在 `compareToReleaseOrSnapshot` 里**直接返回 1**，即
+     * "比任何版本都新"。实测后果是它们被判成 ≥ 26.3 → 选到 MobileGL。
+     * 所以判定顺序必须是「先按形态自己认，认得就返回；认不出按远古处理」，
+     * **绝不能把认不出的交给官方比较器**，反过来一定错。
      *
      * [mobileGLUsable] 由调用方传入——MobileGL 只编了 arm64-v8a，32 位包里没有那个 .so，
-     * 选中它会在启动时加载失败。默认 `true` 只是为了让纯函数在单测里能判满分支，
-     * 真正的取值来自 [RendererManager.canUseMobileGL]。
+     * 选中它会在启动时加载失败；不可用时 26.3+ 回落 MobileGlues。
+     * 默认 `true` 只是为了让纯函数在单测里能判满分支，真正的取值来自
+     * [RendererManager.canUseMobileGL]。
      *
-     * 抽成纯函数是为了能单测：判错的后果对用户是"每次启动被弹窗拦一次"。
-     *
-     * @throws IllegalArgumentException MC 版本号解析不了时（`GameVersionNumber.compare` 抛），
-     *         调用方会跳过该实例——宁可不动，也好过按错误的版本给渲染器。
+     * [current] **已不参与判定**（保留在签名里只是为了不改调用方与既有测试）。
      */
     @JvmStatic
-    fun rendererFor(gameVersion: String, current: String, mobileGLUsable: Boolean = true): String = when {
-        GameVersionNumber.compare(gameVersion, MOBILEGLUES_MIN_MC) < 0 -> Renderer.ID_NGGL4ES
-        mobileGLUsable && GameVersionNumber.compare(gameVersion, MOBILEGL_MIN_MC) >= 0 ->
-            Renderer.ID_MOBILEGL
-        current == Renderer.ID_NGGL4ES -> Renderer.ID_MOBILEGLUES
-        else -> current
+    fun rendererFor(gameVersion: String, current: String, mobileGLUsable: Boolean = true): String =
+        when (tierOf(gameVersion, mobileGLUsable)) {
+            RendererTier.KRYPTON -> Renderer.ID_NGGL4ES
+            RendererTier.MOBILEGLUES -> Renderer.ID_MOBILEGLUES
+            RendererTier.MOBILEGL -> Renderer.ID_MOBILEGL
+        }
+
+    /** 内置渲染器的三档 */
+    private enum class RendererTier { KRYPTON, MOBILEGLUES, MOBILEGL }
+
+    /**
+     * 三档归类。纯字符串判定，**不查版本库、不调官方比较器、永不抛异常**。
+     *
+     * 顺序不能反过来。`GameVersionNumber` 对认不出的名字不抛异常，而是造一个
+     * `Special` 且 `prev == null`，而 `Special.isUnknown()` 在比较时**直接返回 1**
+     * （"比谁都新"）——实测 `0.0.14a` / `Cave game tech test` / `mc-161607` /
+     * `0.31（20091223-1）` / `20100227-1` / `Java版2.0` 全被判成 ≥ 26.3 → MobileGL。
+     * 所以只要自己能确定形态，就必须在问官方之前返回；认不出的**按远古**兜底。
+     *
+     * 兜底给 Krypton Wrapper 而不是 MobileGlues：Krypton Wrapper 的 `minMCver` 是空串，
+     * 永远不会触发 `checkRenderer` 那个 `setCancelable(false)` 的越界弹窗。猜错的最坏
+     * 结果是渲染慢一点，而不是每次启动都被拦一次。
+     */
+    private fun tierOf(gameVersion: String, mobileGLUsable: Boolean): RendererTier {
+        val tier = classify(gameVersion)
+        // 32 位包没有 libMobileGL.so，选中就是加载失败 —— 回落 MobileGlues
+        return if (tier == RendererTier.MOBILEGL && !mobileGLUsable) RendererTier.MOBILEGLUES else tier
+    }
+
+    /** `26.3-snapshot-3` / `1.18-pre1` / `26.2-rc-1`：排在对应正式版**之前**的开发版 */
+    private val PREVIEW_SUFFIX = Regex("-(snapshot|pre|rc)(-|\\d|$)", RegexOption.IGNORE_CASE)
+
+    /**
+     * 按**版本名形态**归类，认不出按远古（Krypton Wrapper）处理。
+     *
+     * 规则从"最古老的命名风格"排到"最新的命名风格"，命中即返回：
+     *
+     * 1. 远古前缀 / 单词：`rd-` `mc-` `c0.` `in-` `inf-` `a1.` `b1.`、`Beta 1.7.3`、`Cave game`
+     * 2. Infdev 的纯日期展示名：`20100227-1` / `20100630`
+     * 3. 按周命名：`13w01a` / `21w37a` / `26w14a`
+     * 4. 年份编号：`26.1` / `26.3` / `27.0`
+     * 5. `1.x`
+     * 6. `0.x`
+     */
+    private fun classify(raw: String): RendererTier {
+        val s = raw.trim()
+        if (s.isEmpty()) return RendererTier.KRYPTON
+
+        // 1) Pre-Classic / Classic / Indev / Infdev / Alpha / Beta
+        //    官方发布名（rd- / mc- / c0. / in- / inf- / a1. / b1.）之外，还要覆盖
+        //    中文资料里的展示名（`Beta 1.7.3` / `Alpha 1.2.6` / `Cave game tech test`）
+        if (Regex("^(rd-|mc-|c\\d|c?0\\.|in-|inf-|a\\d|b\\d)", RegexOption.IGNORE_CASE).containsMatchIn(s)) {
+            return RendererTier.KRYPTON
+        }
+        if (Regex("^(beta|alpha|cave|classic|indev|infdev)", RegexOption.IGNORE_CASE).containsMatchIn(s)) {
+            return RendererTier.KRYPTON
+        }
+
+        // 2) Infdev 的纯日期展示名：20100227-1 / 20100630（官方发布名是 inf- 前缀，
+        //    这两个是资料里常见的写法，解析器认不出，只能靠这里认）
+        if (Regex("^\\d{8}(-\\d+)?$").containsMatchIn(s)) return RendererTier.KRYPTON
+
+        // 3) 按周命名的开发版：13w01a / 21w37a / 26w14a / 20w14∞
+        //    年份与归属正式版的对应关系（按真实发布历史）：
+        //      11w–20w → 1.0 ~ 1.16（20w14∞ 这类愚人节版也在其中）→ Krypton
+        //      21w    → 1.17 是 21w03a–21w20a，**21w37a 起才是 1.18** → 以第 37 周为界
+        //      22w–25w → 1.19 ~ 1.21.x → MobileGlues
+        //      26w    → 26.1 / 26.2 时代 → MobileGlues
+        //      27w+   → MobileGL
+        Regex("^(\\d{2})w(\\d+)").find(s)?.let { m ->
+            val year = m.groupValues[1].toIntOrNull() ?: return@let
+            val week = m.groupValues[2].toIntOrNull() ?: 0
+            return when {
+                year >= 27 -> RendererTier.MOBILEGL
+                year >= 22 -> RendererTier.MOBILEGLUES
+                year == 21 -> if (week >= 37) RendererTier.MOBILEGLUES else RendererTier.KRYPTON
+                else -> RendererTier.KRYPTON
+            }
+        }
+
+        // 4) 年份编号：26.1 / 26.2 / 26.3 / 27.0
+        Regex("^(\\d{2})\\.(\\d+)(?:\\.(\\d+))?").find(s)?.let { m ->
+            val major = m.groupValues[1].toIntOrNull() ?: return@let
+            val minor = m.groupValues[2].toIntOrNull() ?: 0
+            val patch = m.groupValues[3].toIntOrNull() ?: 0
+            val preview = PREVIEW_SUFFIX.containsMatchIn(s)
+            return when {
+                // 档位起点的快照 / rc 排在正式版**之前**（ReleaseType 序数是
+                // UNKNOWN < SNAPSHOT < PRE_RELEASE < RC < GA），退回上一档；
+                // 但带 patch 的（26.3.1-pre-1）已经在正式版之后，不退回
+                major == 27 && minor == 0 && patch == 0 && preview -> RendererTier.MOBILEGLUES
+                major >= 27 -> RendererTier.MOBILEGL
+                major == 26 -> when {
+                    minor >= 4 -> RendererTier.MOBILEGL
+                    minor == 3 -> if (preview && patch == 0) RendererTier.MOBILEGLUES else RendererTier.MOBILEGL
+                    else -> RendererTier.MOBILEGLUES
+                }
+                else -> RendererTier.KRYPTON
+            }
+        }
+
+        // 5) 1.x：1.17.1 及更早 → Krypton；1.18 起 → MobileGlues
+        //    1.18 的快照 / pre 同理排在 1.18 之前，而 MobileGlues 的 minMCver 正是 1.18 —
+        //    留着它照样会触发越界弹窗，所以这些也归 Krypton（1.18.1-pre1 这种带 patch 的不算）
+        Regex("^1\\.(\\d+)(?:\\.(\\d+))?").find(s)?.let { m ->
+            val minor = m.groupValues[1].toIntOrNull() ?: return@let
+            val patch = m.groupValues[2].toIntOrNull() ?: 0
+            val preview = PREVIEW_SUFFIX.containsMatchIn(s)
+            return when {
+                minor > 18 -> RendererTier.MOBILEGLUES
+                minor == 18 -> if (preview && patch == 0) RendererTier.KRYPTON else RendererTier.MOBILEGLUES
+                else -> RendererTier.KRYPTON
+            }
+        }
+
+        // 6) 0.x 开头都是 2009–2010 的 Classic / Indev / Infdev
+        //    （0.31 / 0.30_01c / 0.24_SURVIVAL_TEST / 0.0.14a）
+        if (s.startsWith("0.")) return RendererTier.KRYPTON
+
+        // 认不出：`1.RV-Pre1` / `3D Shareware v1.34` / `Java版2.0` / 用户自造的实例 id …
+        // **一律当远古**——理由见 [tierOf] 的 KDoc，宁可渲染慢也不能每次启动被弹窗拦。
+        return RendererTier.KRYPTON
     }
 
     /** 26.2 是 MC 开始自己挑图形后端的版本；对应首个快照 26w14a */

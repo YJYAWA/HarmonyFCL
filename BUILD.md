@@ -169,19 +169,29 @@ cp build-arm64-v8a/libMobileGL.so ../../FCL/src/main/jniLibs/arm64-v8a/
 
 | 项 | 值 |
 | --- | --- |
-| 上游基线 | FoldCraftLauncher tag `1.3.3.6` → `main` `6ae0051b`（= 上游 1.3.3.7） |
-| 同步范围 | 31 个提交 / 82 个文件 |
-| 本 fork 自身版本 | `versionName` 1.3.3.7，`versionCode` **1338**（上游 1337 + 1） |
+| 上游基线 | FoldCraftLauncher `1.3.3.7` → tag `1.3.4.0` / `main` `cd14d179`（base `6ae0051b`） |
+| 同步范围 | 48 个提交 / 142 个文件（TAKE 105 / ADD 19 / DELETE 7 / CONFLICT 11） |
+| 本 fork 自身版本 | `versionName` 1.3.4.0，`versionCode` **1341**（上游 1340 + 1） |
 
 **这台机器上 `git fetch upstream` 走不通** —— 上游仓库 1.56 GB，无论用不用代理都会在
 传输中途被掐断（`RPC failed; curl 56 ... server closed abruptly` / `early EOF`），
-浅层 `--depth=50`、`--deepen=600` 也一样。可行的同步方式是：
+浅层 `--depth=50`、`--deepen=600` 也一样。`raw.githubusercontent.com` 同样不通（SSL `35`）。
 
-1. 用 GitHub API 拿 `compare/1.3.3.6...main`（`https://api.github.com/repos/FCL-Team/FoldCraftLauncher/compare/1.3.3.6...main`）
-   得到改动文件清单与 base/head 两个 SHA；
-2. 下载 tarball：`https://codeload.github.com/FCL-Team/FoldCraftLauncher/tar.gz/<head-sha>`（354 MB）；
-3. 对每个改动文件，用 `raw.githubusercontent.com/<repo>/<sha>/<path>` 取 base 与 main 两份，
-   再与工作区比对，分成四类处置。
+**1.3.4.0 这次用的办法（最省事，优先试它）**：本仓库是浅克隆，先看 `.git/shallow` ——
+如果浅层边界正好等于上游的 base（这次是 `6ae0051b`），那本地已经有那棵树，
+`git fetch --no-tags upstream main` **只会传增量，几秒完成**。tarball 反而要 30 分钟
+（而且这次下到 76 MB 就 `gzip` 校验失败）。
+
+```
+git fetch --no-tags upstream main          # 先试这个
+git show upstream/main:FCL/build.gradle.kts # 取单文件（raw 不通时用这个）
+```
+
+拿到两个 SHA 之后的分类与合并方式同下（`_sync/plan2.py` / `apply2.py` / `merge2.py`）：
+
+1. 用 GitHub API 拿 `compare/<base>...<head>` 得到改动文件清单与两个 SHA；
+2. 对每个改动文件，用 `git show <rev>:<path>` 取 base 与 head 两份（**不用 raw**）；
+3. 与工作区比对，分成四类处置。
 
 **比对时必须做行尾归一化**：本仓库在 Windows 上是 CRLF 检出，而 `raw` 给的是 LF，
 逐字节比会把每个文本文件都误判成"双边都改"（本次第一轮就因此得出 62 个假冲突，
@@ -194,10 +204,16 @@ cp build-arm64-v8a/libMobileGL.so ../../FCL/src/main/jniLibs/arm64-v8a/
 | SKIP | 我们 == main | 跳过 |
 | CONFLICT | 两边都改了 | 用 `git merge-file ours base main` 三方合并 |
 
-本次结果：TAKE 61 / ADD 15 / SKIP 0 / CONFLICT 6。6 个冲突里 4 个三方合并自动干净
+1.3.3.7 那次的结果（留作参照）：TAKE 61 / ADD 15 / SKIP 0 / CONFLICT 6。6 个冲突里 4 个三方合并自动干净
 （`VersionSetting.kt`、`FCLauncher.java`、`values*/strings.xml`），2 个手工：
 `FCL/build.gradle.kts`（只取上游的 versionName，其余保持 fork 的）与
 `Controllers.java`（见下）。
+
+1.3.4.0 那次：TAKE 105 / ADD 19 / DELETE 7 / CONFLICT 11，其中 9 个三方合并自动干净
+（含 `MainActivity.kt`、`LauncherHelper.java`、`FCLauncher.java`、`values*/strings.xml`），
+2 个手工：`FCL/build.gradle.kts`（保留自签名配置 + 取上游版本号；**别漏掉上游新增的
+`implementation(libs.lifecycle.viewmodel.ktx)`**，漏了会在 `VersionListViewModel.kt` 报
+`Unresolved reference 'viewModelScope'`）与 `version_map.json`（取上游内容后把 versionCode 改 1341）。
 
 ### 3.0.1 `Controllers.java`：上游的去重与同步写盘要跟上
 
@@ -508,6 +524,50 @@ getSuitableJavaVersion(null) → getJavaFromVersionName("jre8")
 回归测试：`FCL/src/test/java/com/mio/autofix/EffectiveJavaMajorTest.kt`（9 个用例）。
 跑法：`./gradlew :FCL:testReleaseUnitTest --tests=com.mio.autofix.*`
 
+### 7.3 渲染器三档判定：`InstanceAutoFix.classify()`
+
+**1.3.4.0 起改成三档强制映射，三档都覆盖用户手选**（`rendererFor()` 直接由档位决定）：
+
+| MC 版本 | 渲染器 | `minMCver` |
+| --- | --- | --- |
+| 1.17.1 及更早（Pre-Classic / Classic / Indev / Infdev / Alpha / Beta / 1.0–1.17.1，含全部快照） | Krypton Wrapper | 空（无下界） |
+| 1.18 ~ 26.2（含） | MobileGlues | `1.18` |
+| 26.3 及以上 | MobileGL | `26.3` |
+
+判定是**纯字符串**的，顺序如下（命中即返回）：
+
+1. 远古前缀 / 单词：`rd-` `mc-` `c0.` `in-` `inf-` `a1.` `b1.`，以及展示名
+   `Beta 1.7.3` / `Alpha 1.2.6` / `Cave game tech test` / `0.0.14a` → Krypton
+2. Infdev 的纯日期展示名 `20100227-1` / `20100630` → Krypton
+3. 按周命名 `NNwNN`：年份 ≤ 20 → Krypton；**21 年以第 37 周为界**（21w03a–21w20a 是 1.17，
+   21w37a 起才是 1.18）；22–26 → MobileGlues；≥ 27 → MobileGL
+4. 年份编号 `NN.NN`：26.3 起 → MobileGL；26.1–26.2 → MobileGlues；≥ 27 → MobileGL
+5. `1.x`：minor ≥ 18 → MobileGlues，否则 Krypton
+6. `0.x` → Krypton
+7. **认不出的一律 Krypton**
+
+**为什么第 7 条必须写"认不出就当远古"，而不是"交给官方比较器"**（这是 1.3.4.0 最大的坑）：
+
+`GameVersionNumber` 对认不出的名字**既不报错也不抛异常**。`asGameVersion()` 会吞掉解析失败，
+返回 `Special(version, version)` 且 `prev == null`；而 `Special.isUnknown()` 在
+`compareToReleaseOrSnapshot()` 里**第一行就 `return 1`** —— 语义是"比任何版本都新"。
+于是 `0.0.14a` / `mc-161607` / `0.31（20091223-1）` / `20100227-1` / `Java版2.0` 全被判成
+≥ 26.3，进而选到 MobileGL。**所以顺序只能是「先按形态自己认，认不出按远古兜底」，
+反过来一定错。**
+
+兜底方向选 Krypton 的理由：它的 `minMCver` 是空串，永远不会触发 `checkRenderer` 那个
+`setCancelable(false)` 的越界弹窗。猜错最坏是渲染慢一点，而不是每次启动被拦一次。
+
+**档位起点的快照 / pre / rc 要退回上一档**：`ReleaseType` 序数是
+`UNKNOWN < SNAPSHOT < PRE_RELEASE < RC < GA`，所以 `1.18-pre1` < `1.18`、
+`26.3-snapshot-3` < `26.3`、`27.0-snapshot-1` < `27.0`，这些都留在上一档
+（`classify()` 里靠 `PREVIEW_SUFFIX` 和 patch 号区分；`1.18.1-pre1`、`26.3.1-pre-1`
+已经在正式版之后，不退回）。`26.3-snapshot-N` 的取舍见 [README 的「已知限制」](README.md#已知限制)。
+
+回归测试：`FCL/src/test/java/com/mio/autofix/InstanceAutoFixTest.kt`（14 个用例，
+含 200+ 个真实版本号的全量清单，以及"周快照跟所属正式版走""压在档位起点的开发版要退回上一档"
+"认不出的名字一律按远古兜底"三组）。**改 `classify()` 前先跑它，测试是唯一真理。**
+
 ---
 
 ## 8. 自定义默认键位
@@ -561,7 +621,7 @@ id 改写后三处天然一致，代码里的默认值一个字都不用改。
 - **MobileGL 只有 `arm64-v8a`。** 32 位包（`armeabi-v7a`）里没有 `libMobileGL.so`，
   那种包上的 26.3 实例会留在 MobileGlues 上（即黑屏）。见 2.2 节。
 - **26.3 的快照 / rc 不会被切到 MobileGL。** 版本比较器里 `SNAPSHOT < RC < GA`，
-  所以 `26.3-snapshot-3` 排在 `26.3` 之前，落在 1.17~26.2 那一支。理由与代价见
+  所以 `26.3-snapshot-3` 排在 `26.3` 之前，落在 1.18~26.2 那一档。理由与代价见
   [README 的「已知限制」](README.md#已知限制)。
 - `.so` 的页对齐是 4KB（`0x1000`），与 FCL 上游自带的 `libgl4es_114.so` 等一致。卓易通/鸿蒙
   目前是 4KB 页，因此不构成问题；若将来系统切到 16KB 页，需要给 MobileGlues、MobileGL 与这些

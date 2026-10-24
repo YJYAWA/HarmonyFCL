@@ -128,6 +128,12 @@ android {
                 keyPassword = harmonyStorePassword
             }
         }
+        // minSdk 26 ≥ 24，v1 已无必要，统一启用 v2 + v3 签名方案（上游 1.3.4.0 起）
+        configureEach {
+            enableV1Signing = false
+            enableV2Signing = true
+            enableV3Signing = true
+        }
     }
 
     defaultConfig {
@@ -138,8 +144,8 @@ android {
         //   versionName 与上游同步（FCL 自身有基于 versionName 的解析，不能自作主张）
         //   versionCode 取上游 +1，与官方包区分开——本 fork 包名是 com.harmony.fcl，
         //   本就可与官方版共存，versionCode 只用于自己这边的升级判定
-        versionCode = 1338
-        versionName = "1.3.3.7"
+        versionCode = 1341
+        versionName = "1.3.4.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
@@ -376,6 +382,7 @@ dependencies {
     implementation(libs.core.ktx)
     implementation(libs.lifecycle.runtime.ktx)
     implementation(libs.lifecycle.viewmodel)
+    implementation(libs.lifecycle.viewmodel.ktx)
     implementation(libs.recyclerview)
     implementation(libs.coroutines.android)
     implementation(libs.glide)
