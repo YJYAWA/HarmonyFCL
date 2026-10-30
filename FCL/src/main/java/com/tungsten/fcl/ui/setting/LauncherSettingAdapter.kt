@@ -30,8 +30,6 @@ import com.tungsten.fcllibrary.util.LocaleUtils
 /** 启动器设置行操作标签：按钮 / 开关 / Spinner / SeekBar / 勾选框按此分发 */
 enum class LauncherSettingTag {
     // 按钮行
-    CHECK_UPDATE,
-    SHOW_CHANGELOG,
     EXPORT_LOG,
     REQUEST_AUDIO,
     CLEAR_MOD_CACHE,
@@ -146,12 +144,6 @@ class LauncherSettingAdapter(
                 R.string.settings_launcher_language, languageList,
                 LocaleUtils.getLanguage(context), LauncherSettingTag.SPINNER_LANGUAGE,
                 R.string.settings_launcher_language_desc,
-            ),
-            Row.ButtonRow(
-                R.string.settings_launcher_upgrade,
-                listOf(Triple(0, R.string.settings_launcher_upgrade_check, LauncherSettingTag.CHECK_UPDATE),
-                    Triple(0, R.string.settings_launcher_update_changelog, LauncherSettingTag.SHOW_CHANGELOG)),
-                R.string.settings_launcher_upgrade_desc,
             ),
             Row.ButtonRow(
                 R.string.settings_launcher_debug,

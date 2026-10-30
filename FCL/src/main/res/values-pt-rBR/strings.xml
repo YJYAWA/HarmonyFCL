@@ -725,7 +725,6 @@
     <string name="settings_fcl_controller">Controle</string>
     <string name="settings_fcl_renderer">Implementação OpenGL (Renderizador)</string>
     <string name="settings_fcl_renderer_vgpu">VGPU (OpenGL 2.1+)</string>
-    <string name="settings_fcl_renderer_freedreno">Freedreno (OpenGL 4.6, suporta GPU Adreno 616-660)</string>
     <string name="settings_download_netdisk">Netdisk (Recomendado para usuários na China)</string>
     <string name="settings_game">Config. do Jogo</string>
     <string name="settings_game_dimension">Resolução</string>
@@ -735,8 +734,6 @@
     <string name="settings_icon">Ícone</string>
     <string name="settings_launcher">Config. do Launcher</string>
     <string name="settings_launcher_debug">Depuração</string>
-    <string name="settings_launcher_upgrade">Atualizar launcher</string>
-    <string name="settings_launcher_upgrade_check">Verificar</string>
     <string name="settings_launcher_download">Baixar</string>
     <string name="settings_launcher_download_threads">Threads</string>
     <string name="settings_launcher_download_threads_auto">Automático</string>
@@ -802,18 +799,12 @@
     <string name="style_rocker_corner_radius">Raio de canto do centro</string>
     <string name="style_rocker_fill_color">Cor do centro</string>
     <string name="update">Atualizar</string>
-    <string name="update_netdisk">Netdisk</string>
     <string name="update_check">Verificar atualizações</string>
     <string name="update_checking">Procurando por atualizações</string>
     <string name="update_check_failed">Falha ao procurar atualização</string>
     <string name="update_date">Data: %s</string>
-    <string name="update_description">Descrição:\n%s</string>
     <string name="update_exist">Nova versão disponível</string>
-    <string name="update_failed">Falha ao baixar a versão mais recente, tente novamente ou baixe da fonte oficial.</string>
-    <string name="update_ignore">Ignorar</string>
-    <string name="update_launcher">Atualizando launcher</string>
     <string name="update_not_exist">Nenhuma atualização disponível</string>
-    <string name="update_type">Tipo: %s</string>
     <string name="update_version">Versão: %s</string>
     <string name="update_version_release">Release</string>
     <string name="update_version_beta">Beta</string>
@@ -914,7 +905,4 @@
     <string name="renderer_source">Fonte:</string>
     <string name="renderer_source_builtin">Integrado</string>
     <string name="animation_idle">Parado</string>
-    <string name="animation_idle_variant_1">Parado 1</string>
-    <string name="animation_idle_variant_2">Parado 2</string>
-    <string name="animation_idle_variant_3">Parado 3</string>
 </resources>

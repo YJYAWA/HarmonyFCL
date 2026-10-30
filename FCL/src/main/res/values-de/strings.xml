@@ -662,7 +662,6 @@
     <string name="settings_fcl_vulkan_driver_system">System-Vulkan-Treiber verwenden</string>
     <string name="settings_fcl_renderer">OpenGL-Implementierung (Renderer)</string>
     <string name="settings_fcl_renderer_vgpu">VGPU (OpenGL 2.1+)</string>
-    <string name="settings_fcl_renderer_freedreno">Freedreno (OpenGL 4.6, nur für adreno616-660)</string>
     <string name="settings_fcl_driver">Vulkan-Treiber</string>
     <string name="settings_download_netdisk">Netdisk(Qıtayda qullanğanlar içün tevsiye etile)</string>
     <string name="settings_game">Spieleinstellungen</string>
@@ -674,8 +673,6 @@
     <string name="settings_icon">Symbol</string>
     <string name="settings_launcher">Launchereinstellungen</string>
     <string name="settings_launcher_debug">Launcher-Log</string>
-    <string name="settings_launcher_upgrade">Launcher-Update</string>
-    <string name="settings_launcher_upgrade_check">Prüfen</string>
     <string name="settings_launcher_download">Download</string>
     <string name="settings_launcher_download_threads">Threads</string>
     <string name="settings_launcher_download_threads_auto">Automatisch erkennen</string>
@@ -742,18 +739,12 @@
     <string name="style_rocker_corner_radius">Stick-Eckenradius</string>
     <string name="style_rocker_fill_color">Stick-Füllfarbe</string>
     <string name="update">Aktualisieren</string>
-    <string name="update_netdisk">Quark-Disk</string>
     <string name="update_check">Update prüfen</string>
     <string name="update_checking">Update wird geprüft</string>
     <string name="update_check_failed">Fehler bei der Update-Prüfung</string>
     <string name="update_date">Datum: %s</string>
-    <string name="update_description">Beschreibung: %s</string>
     <string name="update_exist">Neue Version</string>
-    <string name="update_failed">Die neueste Version konnte nicht heruntergeladen werden, versuchen Sie es erneut oder laden Sie sie von der offiziellen Website herunter.</string>
-    <string name="update_ignore">Ignorieren</string>
-    <string name="update_launcher">Launcher-Update</string>
     <string name="update_not_exist">Keine Updates verfügbar</string>
-    <string name="update_type">Typ: %s</string>
     <string name="update_version">Version %s</string>
     <string name="update_version_release">Release</string>
     <string name="update_version_beta">Beta</string>
@@ -935,7 +926,4 @@
     <string name="renderer_source">Quelle:</string>
     <string name="renderer_source_builtin">Integriert</string>
     <string name="animation_idle">Stillstehen</string>
-    <string name="animation_idle_variant_1">Stillstehen 1</string>
-    <string name="animation_idle_variant_2">Stillstehen 2</string>
-    <string name="animation_idle_variant_3">Stillstehen 3</string>
 </resources>

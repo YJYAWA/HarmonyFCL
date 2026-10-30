@@ -33,6 +33,8 @@ import java.util.logging.Level;
 
 import static java.util.Objects.requireNonNull;
 
+import org.jetbrains.annotations.Nullable;
+
 import com.tungsten.fclcore.util.Hex;
 import com.tungsten.fclcore.util.Logging;
 import com.tungsten.fclcore.util.io.ChecksumMismatchException;
@@ -188,16 +190,21 @@ public class FileDownloadTask extends FetchTask<Void> {
     }
 
     @Override
-    protected Context getContext(URLConnection conn, boolean checkETag) throws IOException {
+    protected Context getContext(URLConnection conn, boolean checkETag, @Nullable String bmclapiHash) throws IOException {
         Path temp = Files.createTempFile(null, null);
         RandomAccessFile rFile = new RandomAccessFile(temp.toFile(), "rw");
         MessageDigest digest = integrityCheck == null ? null : integrityCheck.createDigest();
+        // BMCLAPI 兜底哈希必须边写边算：close() 执行时 temp 已 move 成目标文件，不能再读盘校验
+        MessageDigest bmclapiDigest = bmclapiHash == null ? null : getDigest("SHA-1");
 
         return new Context() {
             @Override
             public void write(byte[] buffer, int offset, int len) throws IOException {
                 if (digest != null) {
                     digest.update(buffer, offset, len);
+                }
+                if (bmclapiDigest != null) {
+                    bmclapiDigest.update(buffer, offset, len);
                 }
 
                 rFile.write(buffer, offset, len);
@@ -237,11 +244,22 @@ public class FileDownloadTask extends FetchTask<Void> {
                 // Integrity check
                 if (integrityCheck != null) {
                     integrityCheck.performCheck(digest);
+                } else if (bmclapiHash != null) {
+                    // 没有显式校验值时以 BMCLAPI 哈希兜底，防止节点切换/重试后落下损坏的文件
+                    String actualHash = Hex.encodeHex(bmclapiDigest.digest());
+                    if (!bmclapiHash.equalsIgnoreCase(actualHash))
+                        throw new ChecksumMismatchException("SHA-1", bmclapiHash, actualHash);
                 }
 
                 if (caching && integrityCheck != null) {
                     try {
                         repository.cacheFile(file.toPath(), integrityCheck.getAlgorithm(), integrityCheck.getChecksum());
+                    } catch (IOException e) {
+                        Logging.LOG.log(Level.WARNING, "Failed to cache file", e);
+                    }
+                } else if (caching && bmclapiHash != null) {
+                    try {
+                        repository.cacheFile(file.toPath(), "SHA-1", bmclapiHash);
                     } catch (IOException e) {
                         Logging.LOG.log(Level.WARNING, "Failed to cache file", e);
                     }

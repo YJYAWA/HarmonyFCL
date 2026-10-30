@@ -454,6 +454,7 @@
     <string name="installer_recent_logs">最近日誌：</string>
     <string name="installer_process_retrying">安裝器進程超時，正在重試（%1$d/%2$d）…</string>
     <string name="installer_process_start_error">無法啟動安裝器進程</string>
+    <string name="installer_process_bad_state">安裝器進程多次崩潰，已被系統暫時禁止啟動，請稍候或重啟應用後重試</string>
     <string name="installer_process_no_exit_code">安裝器進程未返回退出碼，可能已經異常退出</string>
     <string name="installer_process_no_response">安裝器進程無回應，已強制結束</string>
     <string name="installer_process_failed_to_start">安裝器進程啟動失敗</string>
@@ -799,7 +800,6 @@
     <string name="settings_fcl_vulkan_driver_system">使用系統Vulkan驅動</string>
     <string name="settings_fcl_renderer">OpenGL實作方式 (渲染器)</string>
     <string name="settings_fcl_renderer_vgpu">VGPU (OpenGL 2.1+)</string>
-    <string name="settings_fcl_renderer_freedreno">Freedreno (OpenGL 4.6, 僅支持 adreno616-660)</string>
     <string name="settings_fcl_driver">Vulkan驅動</string>
     <string name="settings_download_netdisk">網盤</string>
     <string name="settings_game">遊戲設置</string>
@@ -811,8 +811,6 @@
     <string name="settings_icon">版本圖標</string>
     <string name="settings_launcher">啟動器設置</string>
     <string name="settings_launcher_debug">調試</string>
-    <string name="settings_launcher_upgrade">啟動器更新</string>
-    <string name="settings_launcher_upgrade_check">檢測</string>
     <string name="settings_launcher_download">下載</string>
     <string name="settings_launcher_download_threads">併發數</string>
     <string name="settings_launcher_download_threads_auto">自動選擇併發數</string>
@@ -880,18 +878,12 @@
     <string name="style_rocker_corner_radius">搖桿圓角半徑</string>
     <string name="style_rocker_fill_color">搖桿背景顏色</string>
     <string name="update">更新</string>
-    <string name="update_netdisk">更新（網盤）</string>
     <string name="update_check">檢查更新</string>
     <string name="update_checking">正在檢查更新</string>
     <string name="update_check_failed">無法檢測更新</string>
     <string name="update_date">日期：%s</string>
-    <string name="update_description">描述：\n%s</string>
     <string name="update_exist">檢測到可更新嘅版本</string>
-    <string name="update_failed">無法下載最新版，請重試或從網盤下載。</string>
-    <string name="update_ignore">忽略此版本</string>
-    <string name="update_launcher">更新啟動器</string>
     <string name="update_not_exist">冇可更新嘅版本</string>
-    <string name="update_type">類型：%s</string>
     <string name="update_version">版本：%s</string>
     <string name="update_version_release">正式版</string>
     <string name="update_version_beta">測試版</string>

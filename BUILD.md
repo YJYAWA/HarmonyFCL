@@ -169,9 +169,9 @@ cp build-arm64-v8a/libMobileGL.so ../../FCL/src/main/jniLibs/arm64-v8a/
 
 | 项 | 值 |
 | --- | --- |
-| 上游基线 | FoldCraftLauncher `1.3.3.7` → tag `1.3.4.0` / `main` `cd14d179`（base `6ae0051b`） |
-| 同步范围 | 48 个提交 / 142 个文件（TAKE 105 / ADD 19 / DELETE 7 / CONFLICT 11） |
-| 本 fork 自身版本 | `versionName` 1.3.4.0，`versionCode` **1341**（上游 1340 + 1） |
+| 上游基线 | FoldCraftLauncher `1.3.4.0` `cd14d179` → tag `1.3.4.3` `d3078f3f97` |
+| 同步范围 | 44 个提交 / 215 个文件（新增 76 / 删除 22 / 修改 117） |
+| 本 fork 自身版本 | `versionName` 1.3.4.3，`versionCode` **1344**（上游 1343 + 1） |
 
 **这台机器上 `git fetch upstream` 走不通** —— 上游仓库 1.56 GB，无论用不用代理都会在
 传输中途被掐断（`RPC failed; curl 56 ... server closed abruptly` / `early EOF`），
@@ -208,6 +208,19 @@ git show upstream/main:FCL/build.gradle.kts # 取单文件（raw 不通时用这
 （`VersionSetting.kt`、`FCLauncher.java`、`values*/strings.xml`），2 个手工：
 `FCL/build.gradle.kts`（只取上游的 versionName，其余保持 fork 的）与
 `Controllers.java`（见下）。
+
+1.3.4.3 这次（ghproxy 挂了的极端情况，**下次优先试这一套**）：
+   - `https://ghproxy.net` 与 `raw.githubusercontent.com` 全 502/超时，但 `github.com:443` 通；
+   - 用**部分克隆**只取提交与树、文件按需懒取，几分钟拿到两个 SHA 的全部元数据：
+     ```
+     git remote add up https://github.com:443/FCL-Team/FoldCraftLauncher.git
+     git config remote.up.promisor true
+     git config remote.up.partialclonefilter blob:none
+     git fetch --filter=blob:none --no-tags up <tag>
+     ```
+   - 文件内容走 `https://gh-proxy.com/https://raw.githubusercontent.com/<owner>/<repo>/<sha>/<path>`
+     （支持 Range，可断点续传），8 线程并发，比 `git cat-file` 逐文件懒取快一个数量级；
+   - **不要**指望整包 clone/tarball：107 MB 的包装流会断在 46%，354 MB 的 tarball 只有 13 KB/s。
 
 1.3.4.0 那次：TAKE 105 / ADD 19 / DELETE 7 / CONFLICT 11，其中 9 个三方合并自动干净
 （含 `MainActivity.kt`、`LauncherHelper.java`、`FCLauncher.java`、`values*/strings.xml`），
@@ -564,9 +577,52 @@ getSuitableJavaVersion(null) → getJavaFromVersionName("jre8")
 （`classify()` 里靠 `PREVIEW_SUFFIX` 和 patch 号区分；`1.18.1-pre1`、`26.3.1-pre-1`
 已经在正式版之后，不退回）。`26.3-snapshot-N` 的取舍见 [README 的「已知限制」](README.md#已知限制)。
 
+> ⚠️ **上游 1.3.4.3 起也内置了 MobileGlues（外加 SimpleFPEWrapper），用的是另一套 ID 和
+> `FCL/libs/*.aar` 插件方案（`Renderer.ID_MOBILEGLUES = "acaf8100-…"`）。本 fork 的渲染器层
+> **整体保留自己的实现**，同步时把这些文件列为 HOLD，不跟随上游：
+> `Renderer.kt`、`RendererManager.kt`、`RendererPlugin.kt`、`RendererSelectItemAdapter.kt`、
+> `RendererEnvDialog.kt`、`RendererSelectDialog.kt`、`layout/item_renderer_select.xml`、
+> `FCL/libs/*.aar`（不引入）。`FCLauncher` 里上游那段把 MG 选项写进 `config.json` 的代码
+> 也一并移除（本 fork 的 MG 走 `MG_DIR_PATH` + 自己的 `MobileGluesConfig`）。
+> 两套 ID 并存会导致渲染器列表里出现两个 MobileGlues，所以只能二选一。
+>
+> 上游同期把 **VirGL / Freedreno 与 OSMesa 原生库整体剥离成插件**，这一条**跟随**了
+> （`RendererManager` 里对应条目、`jniLibs/libOSMesa*`、`libvirgl*` 都已删除，APK 少约 60 MB）。
+> `Renderer.ID_VIRGL` / `ID_FREEDRENO` 两个常量仍保留（测试引用），但列表里不再提供。
+
 回归测试：`FCL/src/test/java/com/mio/autofix/InstanceAutoFixTest.kt`（14 个用例，
 含 200+ 个真实版本号的全量清单，以及"周快照跟所属正式版走""压在档位起点的开发版要退回上一档"
 "认不出的名字一律按远古兜底"三组）。**改 `classify()` 前先跑它，测试是唯一真理。**
+
+### 7.4 更新检查已被源码级删除（1.3.4.3）
+
+上游的「检查更新」在本 fork 里**整条链路都不存在**了。改这块之前先读这一段。
+
+**删掉的**（不是开关关掉，是代码没了）：
+
+| 位置 | 处理 |
+| --- | --- |
+| `LauncherSettingAdapter.kt` 的「启动器更新」`Row.ButtonRow` | 整行删除 |
+| `LauncherSettingTag.CHECK_UPDATE` / `SHOW_CHANGELOG` 枚举项 | 删除 |
+| `LauncherSettingPage.onButtonClick` 的两个 `case` | 删除 |
+| `upgrade/UpdateDialog.java`、`upgrade/ChangelogDialog.java` | 文件删除 |
+| `UpdateChecker.check / checkAuto / checkManually / showCurrentChangelog / showUpdateDialog / isIgnore / setIgnore` | 方法删除 |
+| `MainActivity` 里的 `checkAuto(...)` | 换成 `refreshPromoOnly(...)` |
+
+**留下来的两件事**（都在 `UpdateChecker.java`，类名是历史遗留）：
+
+- `getCurrentVersionCode(Context)`：`Announcement` 用它过滤公告，与更新无关；
+- `refreshPromoOnly(Context)`：静默拉一次 `version_map.json`，**只**把最新网盘链接写进
+  `quark_netdisk_url` 偏好给 `QuarkPromo`。不比较版本、不弹窗、不 Toast，异常全吞。
+
+> 为什么不能连 `refreshPromoOnly` 一起删：夸克网盘推广弹窗的链接来自版本表，删了就永远不弹。
+> 它不产生任何用户可见的更新提示。
+
+⚠️ **`UpdateChecker.UPDATE_CHECK_URL*` 这两个常量看着像"检查更新"，其实是上面那次静默拉取用的。**
+要恢复更新检查，除了加回 UI，还得想清楚用户明确要求过「绝不出现更新提示」。
+
+回归：全新装包 → 设置页从上往下看，**不应出现**「启动器更新」分组；
+主界面、启动过程、关于页都不应出现任何版本提示。
 
 ---
 

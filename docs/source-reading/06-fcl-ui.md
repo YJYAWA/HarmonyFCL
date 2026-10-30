@@ -52,6 +52,7 @@
 ### 6. SettingUI（FCLMultiPageUI + TabLayout，4 页）
 - 页 id 15030~15034。0=VersionSettingPage(global=true)、1=**LauncherSettingPage**、2=**PluginManagePage**、3=**AboutPage**。onPageCreated 对 VersionSettingPage 注入 `loadVersion(profile,null)`；onResume 联动 PluginManagePage.onHostResume（系统卸载返回后重扫插件）。
 - **LauncherSettingPage/LauncherSettingAdapter**：与版本设置同款 Row+Tag 机制（LauncherSettingTag：CHECK_UPDATE/SHOW_CHANGELOG/EXPORT_LOG/权限/四组主题色 set/fetch/reset、亮暗背景、视频背景+音量、光标/菜单图标、语言/主题模式 Spinner、下载源/线程、动画速度/色彩透明度/振动等）；语言切换 `getActivity().recreate()`；亮暗切换因 configChanges 含 uiMode 需手动 `ThemeEngine.refreshTheme()`；从背景取色用 Palette（muted/vibrant）；SeekBar 行复用时**先摘监听再 setMax/progress**（钳制回调会把旧行 tag 的值写进错误设置项）。
+- **AboutPage**：链接列表末尾两项查看随安装包分发的用户协议与隐私政策（`LegalAgreement.load` 后台读取，FCLAlertDialog 展示）；隐私政策弹窗带「撤回同意」，确认后清除同意记录并退出进程，下次启动重新走确认页。
 - DocIndex/DocCategoryAdapter/ArticleAdapter 是帮助文档选择器组件（ArticleAdapter 打开 fcl-team.github.io 文档页），当前 SettingUI 未挂载第 5 页，属遗留代码。
 
 ### 7. ControllerUI（FCLMultiPageUI 无 tab，2 页）

@@ -720,7 +720,6 @@
     <string name="settings_fcl_vulkan_driver_system">Использовать системные драйверы Vulkan</string>
     <string name="settings_fcl_renderer">Реализация OpenGL (рендерер)</string>
     <string name="settings_fcl_renderer_vgpu">VGPU (OpenGL 2.1+)</string>
-    <string name="settings_fcl_renderer_freedreno">Freedreno (OpenGL 4.6, только для adreno616-660)</string>
     <string name="settings_fcl_driver">Драйвер Vulkan</string>
     <string name="settings_download_netdisk">NetDisk (рекомендуется для пользователей в Китае)</string>
     <string name="settings_game">Настройки игры</string>
@@ -732,8 +731,6 @@
     <string name="settings_icon">Иконка</string>
     <string name="settings_launcher">Настройки лаунчера</string>
     <string name="settings_launcher_debug">Лог лаунчера</string>
-    <string name="settings_launcher_upgrade">Обновление лаунчера</string>
-    <string name="settings_launcher_upgrade_check">Проверить</string>
     <string name="settings_launcher_download">Загрузка</string>
     <string name="settings_launcher_download_threads">Потоки</string>
     <string name="settings_launcher_download_threads_auto">Автоматически определять</string>
@@ -802,18 +799,12 @@
     <string name="style_rocker_corner_radius">Радиус углов стика</string>
     <string name="style_rocker_fill_color">Цвет заливки стика</string>
     <string name="update">Обновить</string>
-    <string name="update_netdisk">Quark диск</string>
     <string name="update_check">Проверить обновление</string>
     <string name="update_checking">Проверка обновления</string>
     <string name="update_check_failed">Ошибка во время проверки обновления</string>
     <string name="update_date">Дата: %s</string>
-    <string name="update_description">Описание: %s</string>
     <string name="update_exist">Новая версия</string>
-    <string name="update_failed">Не удалось загрузить последнюю версию, повторите попытку или загрузите ее с официального сайта.</string>
-    <string name="update_ignore">Игнорировать</string>
-    <string name="update_launcher">Обновление лаунчера</string>
     <string name="update_not_exist">Нет доступных обновлений</string>
-    <string name="update_type">Тип: %s</string>
     <string name="update_version">Версия %s</string>
     <string name="update_version_release">Релиз</string>
     <string name="update_version_beta">Бета</string>
@@ -996,7 +987,4 @@
     <string name="create_account_first">Создайте игровой аккаунт перед запуском игры</string>
     <string name="version_list_refreshing">Получение списка удалённых версий…</string>
     <string name="animation_idle">Простой</string>
-    <string name="animation_idle_variant_1">Простой 1</string>
-    <string name="animation_idle_variant_2">Простой 2</string>
-    <string name="animation_idle_variant_3">Простой 3</string>
 </resources>

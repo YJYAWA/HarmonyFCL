@@ -1,5 +1,137 @@
 # Changelog
 
+## [1.3.4.3] - 2026-10-30
+
+### 中文
+
+#### ✨ 新功能
+
+1. **内置 MobileGlues 与 SimpleFPEWrapper 渲染器 (#1971)**：新增两个内置渲染器——MobileGlues（走 `POJAV_RENDERER=opengles3_mobileglues`，`MG_DIR_PATH` 指向应用私有目录）与 SimpleFPEWrapper（走 `POJAV_RENDERER=opengles3_sfpew`，SFPEW_RELAXED_CONTEXT 单线程单上下文优化默认开启）；内置渲染器列表行尾新增齿轮入口，支持配置环境变量与 MobileGlues 全量运行时选项（enableANGLE、enableNoError、angleDepthClearFixMode、customGLVersion、maxGlslCacheSize、三扩展开关、FSR1 超分等），启动时仅把显式配置过的键合并写入 `files/mobileglues/config.json`（保留 MG 自管键）经 `MG_DIR_PATH` 生效；环境变量对话框支持可选说明文字渲染；顺带加固 gl_bridge 对 `LIBGL_ES` 缺省的空值处理（原 `strtol(NULL)` 在 gl_init_context SEGV）
+2. **皮肤 3D 预览恢复体素化实心第二层（复刻 3D Skin Layers）**：1.3.4.2 回归 GLES 渲染器时第二层退化为 OverlayExtrusion 边缘挤出（仅 0.5px 侧壁），3D 皮肤层开关开/关几乎无差别；现恢复体素化实现——第二层每个全不透明像素（alpha=255）生成六面贴图立方体，相邻面剔除、UV 内缩 1/4096 防渗色、头 1.05/四肢 1.02 缩放校正，并增补方向光照（环境光 0.70 + 漫反射 0.42）；两遍绘制：体素层先画写深度，第二层零厚度面片后画（关深度写）仅呈现半透明像素；开关关闭时第二层整体回落平面；slim 模型切换同步重建手臂体素层
+3. **控件编辑跨组能力 (#1763)**：单控件跨组复制/移动——编辑栏新增「跨组」按钮，先选复制/移动再从目标组列表点选执行（复制生成新控件 id，移动保留 id 并先删后加避免同 id 双渲染）；控件组合并——控件组编辑对话框新增「把该组控件合并到其他组」，全部控件转移至目标组（保留控件 id），原组保留但清空，双方数据未加载时自动按需加载；多组同看同改——左侧编辑菜单新增「跨组编辑」开关（默认关闭），开启后参考组（ghost）控件开放选中/拖动/缩放/编辑，视图持有归属组真实数据对象引用，改动直接写入归属组；绑定控件组显隐指定状态——绑定对话框逐组四态（不绑定/按下切换/按下显示/按下隐藏），绑定串以 `id:show` / `id:hide` 后缀扩展，旧配置向后兼容
+
+#### ⚡ 优化
+
+1. **OSMesa 剥离为渲染器插件 (#1959)**：移除随包内置的 libOSMesa_8/81、libvirgl_test_server、libvirglrenderer_1 与内置 Freedreno/VirGL 渲染器条目，OSMesa 改由 FCLRendererPlugin 插件提供，保留全部原生加载通路并为插件渲染器补全 VIRGL_TEST_SERVER / VTEST_SOCKET_NAME / MESA_GLSL_CACHE_DIR 运行时路径；顺带修复插件渲染器三处 native 缺陷——dlsym_OSMesa 优先读 `LIB_MESA_NAME`（裸库名 dlopen 在类加载器命名空间下搜不到插件目录致 SIGSEGV）、virglMakeCurrent 的 OSMesa 颜色缓冲误传 libc setbuffer 函数地址（bionic API23+ 声明，首帧 flush 写只读代码页 SIGSEGV，改为按保存的宽高分配真实缓冲区）、virgl_ensure_framebuffer 先分配后释放（calloc 失败时保留旧缓冲并返回 NULL，避免 OOM 时向 OSMesaMakeCurrent 传 NULL）
+
+#### 🐛 修复
+
+1. **版本列表切换版本异常跳动 (#1974)**：三处跳动源一并修复——分类 Tab 栏 scrollFlags 含 enterAlways|snap，点按条目的微小纵向漂移即触发嵌套滚动，AppBarLayout 展开又 snap 回弹致整列表上下窜动（改为仅 scroll，上滑仍可收起）；diff 内容变化返回 null payload 触发整行重绑与交叉淡出/入场动画重播，一次刷新可见条目集体横滑闪烁（改为 PAYLOAD_CONTENT 局部重绑，复用 ViewHolder 只刷数据字段无动画）；render 定位选中项在已可见时仍拽动视口（改为仅不可见时才滚动）
+2. **Cleanroom 原版音效全失 (#1969/#1980)**：两处独立根因——jsound 桥接每次后端调用都 alcMakeContextCurrent 抢占进程全局 current 并清空调用线程 TLS，paulscode 线程上的 AL 调用全部落进桥接 context（source ID 失效），其自身 context 被判孤儿遭 OpenAL Soft 1.25+ alcCloseDevice 隐式销毁后静默切换 No Sound，现改走 alcSetThreadContext 线程局部激活（守卫式 enter/leave 保存还原旧 TLS current，无扩展兜底路径同样保存/还原全局 current）；Cleanroom 替换 destroy() 后 AL.create() 在 alcDevice 为空时崩溃，更新 lwjgl-openal.jar 补充 alcDevice 判空
+3. **26.4 快照 JNA 5.19.1 启动崩溃**：`jna.boot.library.path` 落空后 JNA 从 MC jar 抽取 glibc 版 libjnidispatch.so，在 Android 上 dlopen 必崩；fetch-jna.sh 版本范围扩展到 5.19.1（官方 AAR 为 natives 正源），assets 补齐 5.19.1 当前架构 natives（version 哈希随新产物自动更新触发重装），并新增 JnaNatives 兜底——assets 快路径缺失时从阿里云/华为/repo1 下载 jna AAR 提取对应架构库到 RUNTIME_DIR/jna/<版本>/
+4. **BMCLAPI 无显式校验值下载报 NoSuchFileException**：1.3.4.2 慢速节点切换功能引入的 FileDownloadTask 兜底校验在 close() 里重读 temp 文件，但 FileUtils.moveFile（copy 后删除源文件）在校验前已把 temp 删除，BMCLAPI 链路且无显式 IntegrityCheck 的下载（如 OptiFine 安装）在文件成功落位后 100% 报错，并随重试反复完整重下仍失败；改为 getContext 创建增量 MessageDigest、write() 边写边喂、close() 直接比对内存摘要，零额外 I/O 且与 integrityCheck 路径同构
+5. **主题背景偶发绘制崩溃**：Glide 加载的 centerCrop 产物位图归位图池所有，视图 detach、同视图再次加载或 trimMemory 池回收时被 recycle，而背景仍被视图持续绘制，主线程抛 "Canvas: trying to use a recycled bitmap"；改为复制自持位图后再设背景，MainActivity/Splash/ThemeEngine.applyBackground/GameMenu 四处调用点一并修复
+6. **Actinium 标题界面把窗口设成 0×0**：GLFW 拦截非正尺寸窗口调用，不再向下游传递非法尺寸
+7. **下载页条目透出侧滑收藏按钮**：主题色透明度<100% 时 SwipeMenuLayout 垫底的收藏按钮透出；关闭态隐藏菜单层（INVISIBLE 保测量）
+8. **用户协议/隐私页链接隐形**：链接色与主题色背景同色时不可见；改为按背景亮度取主色的暗/亮变体
+9. **MioLibPatcher 系统信息报错**：内置 MioLibPatcher 所带 oshi-core-ffm 7.x 在 bionic 缺 utmpx 符号，SystemReport 三组信息报错；符号桩兜底 + HAS_UDEV 直置
+
+### English
+
+#### ✨ New Features
+
+1. **Two new built-in renderers: MobileGlues and SimpleFPEWrapper (#1971)**: MobileGlues (via `POJAV_RENDERER=opengles3_mobileglues`, with `MG_DIR_PATH` pointing at the app's private directory) and SimpleFPEWrapper (via `POJAV_RENDERER=opengles3_sfpew`, with the SFPEW_RELAXED_CONTEXT single-thread/single-context optimization on by default); a gear entry was added at the end of each built-in renderer row, opening configuration for environment variables and the full set of MobileGlues runtime options (enableANGLE, enableNoError, angleDepthClearFixMode, customGLVersion, maxGlslCacheSize, three extension toggles, FSR1 upscaling, etc.) — at launch only explicitly configured keys are merged into `files/mobileglues/config.json` (MG-managed keys are preserved) and applied via `MG_DIR_PATH`; the environment-variable dialog now renders an optional description line; also hardened gl_bridge against an empty `LIBGL_ES` (the previous `strtol(NULL)` SEGV'd in gl_init_context)
+2. **The 3D skin preview restored its voxelized solid second layer (replicating 3D Skin Layers)**: When 1.3.4.2 returned to the GLES renderer, the second layer had degraded to OverlayExtrusion edge extrusion (only 0.5px side walls), making the 3D skin layer toggle nearly indistinguishable on/off; the voxelized implementation is restored — every fully opaque pixel (alpha=255) of the second layer generates a six-face textured cube with adjacent-face culling, UV inset of 1/4096 against color bleeding, and head 1.05 / limbs 1.02 scale correction, plus directional lighting (ambient 0.70 + diffuse 0.42); two draw passes: the voxel layer draws first writing depth, then the second layer's zero-thickness faces draw with depth writes off, showing only translucent pixels; with the toggle off the second layer falls back to flat; slim-model switching rebuilds the arm voxel layer accordingly
+3. **Cross-group capabilities in the control editor (#1763)**: Cross-group copy/move of a single control — a new "cross-group" button in the edit bar, pick copy/move then tap a target group (copy generates a new control id, move keeps the id and deletes-then-adds to avoid double rendering); group merging — the group-edit dialog gains "merge this group's controls into another group", transferring all controls (ids preserved) while keeping the emptied source group, loading either side's data on demand when missing; viewing and editing multiple groups at once — a "cross-group editing" toggle in the left edit menu (off by default) makes reference-group (ghost) controls selectable/draggable/scalable/editable, with views holding real references to the owning group's data so edits write through; binding a control group to show/hide with an explicit state — the bind dialog now offers four states per group (none / toggle on press / show on press / hide on press), encoded as `id:show` / `id:hide` suffixes, backward compatible with old configurations
+
+#### ⚡ Improvements
+
+1. **OSMesa split out into a renderer plugin (#1959)**: The bundled libOSMesa_8/81, libvirgl_test_server and libvirglrenderer_1 and the built-in Freedreno/VirGL renderer entries were removed; OSMesa is now provided by an FCLRendererPlugin, keeping the full native loading path and completing VIRGL_TEST_SERVER / VTEST_SOCKET_NAME / MESA_GLSL_CACHE_DIR runtime paths for plugin renderers; three native defects were fixed along the way — dlsym_OSMesa now prefers `LIB_MESA_NAME` (a bare-soname dlopen can't find the plugin directory under the classloader namespace and SIGSEGVs), virglMakeCurrent no longer passes libc's setbuffer function address as the OSMesa color buffer (declared since bionic API23+; the first flush wrote to a read-only code page and SIGSEGV'd — now a real buffer is allocated from the saved dimensions), and virgl_ensure_framebuffer allocates before freeing (on calloc failure the old buffer is kept and NULL returned, avoiding passing NULL to OSMesaMakeCurrent on OOM)
+
+#### 🐛 Bug Fixes
+
+1. **Version list jumping abnormally when switching versions (#1974)**: Three jump sources fixed together — the category tab bar's scrollFlags included enterAlways|snap, so a tiny vertical drift while tapping triggered nested scrolling and the AppBarLayout expanded then snapped back, bouncing the whole list (now scroll-only; swiping up still collapses it); diff content changes returned a null payload, rebinding whole rows and replaying cross-fade/entry animations so every visible row slid and flickered on each refresh (now PAYLOAD_CONTENT partial rebinds that reuse the ViewHolder and refresh only data fields); render scrolled to the selected entry even when it was already visible (now scrolls only when it's out of view)
+2. **Cleanroom losing all vanilla sound (#1969/#1980)**: Two independent root causes — the jsound bridge called alcMakeContextCurrent on every backend call, hijacking the process-global current and clearing the calling thread's TLS, so AL calls on paulscode's thread all landed in the bridge's context (invalidating source IDs) while its own context was orphaned and implicitly destroyed by OpenAL Soft 1.25+'s alcCloseDevice, silently switching to No Sound; activation now goes through alcSetThreadContext (guard-style enter/leave that saves and restores the old TLS current, with the fallback path likewise saving/restoring the global current); and after Cleanroom replaced destroy(), AL.create() crashed on a null alcDevice — lwjgl-openal.jar was updated with the null check
+3. **Startup crash on 26.4 snapshots (JNA 5.19.1)**: When `jna.boot.library.path` missed, JNA extracted the glibc build of libjnidispatch.so from the MC jar, which always fails to dlopen on Android; fetch-jna.sh now covers 5.19.1 (the official AAR is the natives source of truth), the assets carry the 5.19.1 natives for the current ABI (the version hash updates with the new artifact to trigger reinstall), and a new JnaNatives fallback downloads the jna AAR from Aliyun/Huawei/repo1 and extracts the matching-architecture library into RUNTIME_DIR/jna/<version>/ when the assets fast path is missing
+4. **NoSuchFileException when downloading via BMCLAPI without an explicit checksum**: The FileDownloadTask fallback check introduced with 1.3.4.2's slow-node switching re-read the temp file in close(), but FileUtils.moveFile (copy then delete source) had already removed it, so any BMCLAPI-chain download without an explicit IntegrityCheck (e.g. OptiFine installs) failed 100% of the time after successfully landing, then re-downloaded in full on every retry; the hash is now computed incrementally — a MessageDigest is created via getContext, write() feeds it as data arrives, and close() compares the in-memory digest — with zero extra I/O and the same structure as the integrityCheck path
+5. **Occasional theme-background drawing crashes**: The centerCrop bitmap Glide produced belonged to its bitmap pool; on view detach, another load into the same view, or pool recycling during trimMemory it got recycled while the background kept drawing it, throwing "Canvas: trying to use a recycled bitmap" on the main thread; the background is now set from a copied, self-owned bitmap, fixed at all four call sites (MainActivity/Splash/ThemeEngine.applyBackground/GameMenu)
+6. **Actinium's title screen setting the window to 0×0**: GLFW now intercepts non-positive window size calls instead of passing them downstream
+7. **Download-page items showing the underlying swipe favorite button**: With theme-color opacity below 100%, the favorite button behind SwipeMenuLayout showed through; the menu layer is now hidden in the closed state (INVISIBLE to preserve measurement)
+8. **Invisible links on the user agreement/privacy pages**: Link color could match the theme-color background; links now pick a dark/light variant of the primary color based on background luminance
+9. **MioLibPatcher system report errors**: The bundled MioLibPatcher's oshi-core-ffm 7.x references utmpx symbols missing on bionic, failing three sections of SystemReport; symbol stubs plus a fixed HAS_UDEV now cover it
+
+## [1.3.4.2] - 2026-10-25
+
+### 中文
+
+#### ✨ 新功能
+
+1. **皮肤 3D 预览回归 GLES 手写模型渲染器**：自历史快照恢复刚体模型渲染器（TextureView + GLES 2.0 + 程序化动画），删除 GLTF 烘焙动画实现与模型资产；动画选择与 3D 皮肤层开关沿用既有 DataStore schema 持久化，移除 GLTF 专属的身体腿部分离开关；新增交互——单击点按压扁（弹簧脉冲）、拖拽松手偏航与俯仰自动回正；顺带补齐旧 GLES 链遗留修复：surface 重建后披风纹理未重传、64x32 旧格式皮肤切页错乱（归一化回写 texture）、初始默认皮肤与模型类型不匹配
+2. **「邦友的酒」旋转 Q 弹动画**：匀速自转 + 果冻式压扁回弹（PlayerModel 新增 rootRotationY 自转轴与 rootScaleY/rootScaleXZ 形变通道）；新增坐姿动作——双腿前抬微开随节奏晃动、身体轻微下沉；压扁相位横向拉宽至 1.18，弹起相位恢复原宽不再收窄
+
+#### ⚡ 优化
+
+1. **模组中文名数据重构（同步 HMCL #6987）**：ModTranslations 主线程惰性解析替换为 AddonProjectInfoRegistry（软引用缓存，随用随载）；数据文件由 mod_data.txt 迁移为 addon/mod.csv 新格式（含 modrinthId 列）并新增 modpack.csv 整合包数据；中文搜索、下载页、模组列表、翻译弹窗全链适配
+2. **BMCLAPI 慢速节点主动切换**：FetchTask 按 10 秒窗口观测下载速度，预计剩余下载时间超过一个窗口才切换节点且最多两次，避免频繁切换抖动；x-bmclapi-hash 响应头全链收集（FetchTask/GetTask/FileDownloadTask），用于完整性校验并让哈希缓存直接命中，省去为校验而重复下载的开销
+
+#### 🐛 修复
+
+1. **Cleanroom 启动崩溃 (#1962)**：崩溃一——Cleanroom setInitialDisplayMode 硬调 window.size()，SDL3 Android 驱动无 SetWindowSize 回调返回 Unsupported 即崩，sdl_hook 双层拦截（bytehook GOT + dlsym 出口）该调用直接返回成功，尺寸由注入 Surface 决定，调用方经 SDL_GetWindowSize 读回真实值；崩溃二——Cleanroom 自带 lwjgly（LWJGL2 API 层）按含 APPLE 扩展位的 LWJGL 3.4.3 GLCapabilities 编译，被 FCL 排 classpath 最前的定制 3.4.1 lwjgl.jar 遮蔽抛 NoSuchFieldError，对 lwjgly 全量类 javap 枚举字段引用取差集，补齐恰好缺失的 14 个 GL_APPLE_* 扩展布尔
+2. **文件多选导入资源包/光影/模组崩溃 (#1961)**：SelectedFile.fileName 对未授权 uri 的 query 解析异常兜底；导入循环内单文件失败只计入失败列表，不再中断整个导入
+3. **Android 13 进游戏闪退**：clearFrameRate() 是 API 34 才有的方法，原 TIRAMISU(33) 守卫在 Android 13 上触发 NoSuchMethodError——游戏 Surface 就绪且关闭最高刷新率开关时直接崩溃；现守卫提升到 API 34，API 30~33 改用 setFrameRate(0) 等价清除，顺带修复 Android 11/12 上关闭开关后帧率投票残留
+4. **控制器样式编辑不生效 (#1957)**：样式同名注册改为就地更新，修复重载布局后 textSize 等属性修改不生效；样式编辑改为就地更新并让按键数据监听样式属性，修复首次进编辑页改字号不实时刷新
+5. **安装器启动异常后空转**：launchAPIInstaller 异常改为回写退出码并自杀进程，"process is bad" 场景快速失败，不再空转重试
+
+#### ➖ 移除
+
+1. **中国大陆地区限制 (#1955)**：移除启动时的网络归属地查询与游戏下载功能的地区禁用逻辑，用户协议文本同步更新
+
+### English
+
+#### ✨ New Features
+
+1. **3D skin preview returned to a hand-written GLES model renderer**: The rigid-body model renderer (TextureView + GLES 2.0 + procedural animations) was restored from a historical snapshot, deleting the GLTF baked-animation implementation and model assets; animation selection and the 3D skin layer toggle keep using the existing DataStore schema, and the GLTF-specific body/leg split toggle was removed. New interactions: tap to squish the model (spring pulse), drag and release to auto-recenter yaw and pitch. Leftover fixes of the old GLES chain were carried over: cape texture not re-uploaded after surface recreation, old-format 64x32 skins rendering misaligned after page switches (normalized write-back to texture), and the initial default skin not matching the model type
+2. **New playful "spin jump" Q-bouncy animation**: Constant-speed rotation + jelly-style squash and bounce (PlayerModel gained a rootRotationY spin axis and rootScaleY/rootScaleXZ deformation channels); a new sitting pose — legs raised and slightly apart, swaying with the rhythm while the body sinks a little; the squish phase widens the model horizontally to 1.18x and the bounce phase restores the original width
+
+#### ⚡ Improvements
+
+1. **Mod Chinese-translation data reworked (synced with HMCL #6987)**: The lazily-parsed ModTranslations was replaced by AddonProjectInfoRegistry (soft-reference cache, loaded on demand); the data file moved from mod_data.txt to the new addon/mod.csv format (with a modrinthId column) plus a new modpack.csv for modpacks; the Chinese-name search, download page, mod list, and translation dialogs were adapted across the chain
+2. **BMCLAPI slow-node auto-switching**: FetchTask observes download speed over 10-second windows and switches nodes only when the estimated remaining time exceeds one window, at most twice, avoiding switch jitter; the x-bmclapi-hash response header is collected across the whole chain (FetchTask/GetTask/FileDownloadTask) for integrity verification and direct hash-cache hits, saving the re-download otherwise needed for hash verification
+
+#### 🐛 Bug Fixes
+
+1. **Cleanroom startup crash (#1962)**: Crash one — Cleanroom's setInitialDisplayMode calls window.size() directly, and the SDL3 Android driver has no SetWindowSize callback and returns Unsupported, crashing the game; the sdl_hook dual-layer interception (bytehook GOT + dlsym outlet) now returns success for that call, the size is decided by the injected Surface, and callers read the real value back via SDL_GetWindowSize. Crash two — Cleanroom bundles lwjgly (the LWJGL2 API layer) compiled against an LWJGL 3.4.3 GLCapabilities that includes the APPLE extension bits, which got shadowed by FCL's customized 3.4.1 lwjgl.jar placed first on the classpath and threw NoSuchFieldError; field references were enumerated across all lwjgly classes via javap, and the exactly-14 missing GL_APPLE_* extension booleans were added
+2. **Crash when importing resource packs/shaders/mods via multi-file selection (#1961)**: SelectedFile.fileName gained a fallback for query-parsing exceptions on unauthorized URIs; a single failed file inside the import loop now only counts toward the failure list instead of interrupting the whole import
+3. **Crash when entering the game on Android 13**: clearFrameRate() only exists since API 34, and the old TIRAMISU(33) guard triggered NoSuchMethodError on Android 13 — crashing whenever the game surface was ready and the max-refresh-rate toggle was off; the guard is now raised to API 34 and API 30~33 use an equivalent setFrameRate(0), which also fixes the frame-rate vote lingering after turning the toggle off on Android 11/12
+4. **Controller style edits not taking effect (#1957)**: Same-name style registration now updates in place, fixing textSize and other property edits not applying after a layout reload; style editing also updates in place and key data now listens to style properties, fixing font-size changes not refreshing live on first entry to the editor
+5. **Installer process idling after a launch failure**: launchAPIInstaller exceptions now write back the exit code and kill the process, failing fast on "process is bad" instead of spinning in retry loops
+
+#### ➖ Removals
+
+1. **Mainland-China region restriction (#1955)**: The network region lookup at startup and the region-based disabling of game downloads were removed; the user agreement text was updated accordingly
+
+## [1.3.4.1] - 2026-10-20
+
+### 中文
+
+#### ✨ 新功能
+
+1. **游戏内全屏显示开关**：右菜单功能分类新增「全屏显示」开关，与启动器设置页的全屏功能同一实现——切换时经 ThemeEngine 更新持久化值并一步应用到当前窗口，后续焦点恢复/onPostResume 会按主题值重放全屏标志，保证与启动器行为一致
+2. **自定义 Vulkan 驱动加载泛化**：驱动插件新增可选 meta-data 声明——`driver_lib`（驱动库文件名，缺省 libvulkan_freedreno.so）与 `driver_gpu`（adreno/mali/any，缺省 adreno），旧 Turnip 插件不受影响；linkerhook 按 `DRIVER_LIB` 环境变量加载驱动库，GPU 门控经 `DRIVER_GPU` 判定家族，Adreno 专属路径改为 checkDriverGpuFamily；检测链路 useTurnip 更名 useCustomDriver 并传递完整 Driver（路径/库名/GPU 家族），VulkanCheckRecord 记录 driverLib/driverGpu 参与缓存身份，检测缓存键随更名自动重检一次；由此支持 Mali 平台的 panvk 驱动（库名 libvulkan_panfrost.so）
+
+#### 🐛 修复
+
+1. **关闭 FML 早期加载屏误伤老版本**：上一版无条件写入 `earlyWindowControl = false`，该键在 26.3 以下 Forge 同样生效，导致模组加载进度动画被关；现按游戏版本分流——26.3+ 维持写入（规避 gralloc 互堵 UI 冻死），更早版本不创建 fml.toml 并清除已存在文件中的残留关闭键，恢复早期加载屏
+2. **Vulkan 驱动设置改名后全部设置被重置**：useTurnip 更名 useCustomDriver 后旧 DataStore 数据反序列化失败，所有设置回退默认值；现 DataStore 配置忽略未知 key，并为 Vulkan 记录补默认值
+3. **收藏页多选操作栏窄屏溢出 (#1938)**：多选操作栏改为两行排布，修复窄屏下按钮溢出屏幕、无法取消多选
+4. **内置文件管理器看不到 .minecraft 等隐藏目录 (#1935)**：移除隐藏文件过滤与「显示隐藏文件」开关，始终显示全部文件，修复以「.」开头的目录在添加游戏路径等场景不可见
+5. **手柄瞬断后 NPE 崩溃 (#1936)**：手柄瞬间断开后残留事件携带的 device 为 null，事件处理解引用即崩；现判空跳过残留事件
+
+### English
+
+#### ✨ New Features
+
+1. **In-game fullscreen toggle**: The right menu's feature section gains a "Fullscreen display" toggle, sharing the same implementation as the launcher settings page — toggling updates the persisted value through ThemeEngine and applies it to the current window in one step, and subsequent focus restoration/onPostResume replays the fullscreen flags from the theme value, keeping behavior consistent with the launcher
+2. **Generalized custom Vulkan driver loading**: Driver plugins gain optional meta-data declarations — `driver_lib` (driver library file name, defaulting to libvulkan_freedreno.so) and `driver_gpu` (adreno/mali/any, defaulting to adreno); existing Turnip plugins are unaffected. The linkerhook loads the driver library via the `DRIVER_LIB` environment variable, GPU gating goes through `DRIVER_GPU` family checks, and the Adreno-specific path became checkDriverGpuFamily. The detection chain renamed useTurnip to useCustomDriver and passes a full Driver (path/lib/gpu family); VulkanCheckRecord now records driverLib/driverGpu as part of the cache identity, and the detection cache re-checks once automatically due to the renamed key. This enables Mali panvk drivers (library name libvulkan_panfrost.so)
+
+#### 🐛 Bug Fixes
+
+1. **FML early-loading window disabled on older MC versions too**: The previous release wrote `earlyWindowControl = false` unconditionally, and the key also takes effect on pre-26.3 Forge, turning off the mod-loading progress animation; the write is now version-gated — 26.3+ keeps it (avoiding the gralloc deadlock that froze the UI), while older versions no longer create fml.toml and clear any leftover disable key from existing files, restoring the early-loading screen
+2. **All settings reset after the Vulkan driver setting was renamed**: After useTurnip was renamed to useCustomDriver, old DataStore data failed to deserialize and every setting fell back to defaults; the DataStore config now ignores unknown keys and Vulkan records gained default values
+3. **Favorites-page multi-select action bar overflowing on narrow screens (#1938)**: The action bar is now laid out in two rows, fixing buttons overflowing the screen on narrow displays which made it impossible to exit multi-select
+4. **Built-in file manager hiding .minecraft and other dot-directories (#1935)**: The hidden-file filter and its "show hidden files" toggle were removed; all files are always shown, fixing dot-prefixed directories being invisible when adding game paths and similar flows
+5. **NPE crash after a gamepad momentarily disconnects (#1936)**: Stale events after a momentary disconnect carried a null device and crashed on dereference; they are now skipped on a null check
+
 ## [1.3.4.0] - 2026-10-15
 
 ### 中文

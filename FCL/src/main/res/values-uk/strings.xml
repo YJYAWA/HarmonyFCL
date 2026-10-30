@@ -683,7 +683,6 @@
     <string name="settings_fcl_vulkan_driver_system">Використання системних драйверів Vulkan</string>
     <string name="settings_fcl_renderer">Реалізація OpenGL (рендерер)</string>
     <string name="settings_fcl_renderer_vgpu">VGPU (OpenGL 2.1+)</string>
-    <string name="settings_fcl_renderer_freedreno">Freedreno (OpenGL 4.6, тільки для adreno616-660)</string>
     <string name="settings_fcl_driver">Драйвер Vulkan</string>
     <string name="settings_download_netdisk">Netdisk (рекомендовано для користувачів у Китаї)</string>
     <string name="settings_game">Налаштування гри</string>
@@ -695,8 +694,6 @@
     <string name="settings_icon">Іконка</string>
     <string name="settings_launcher">Налаштування лаунчера</string>
     <string name="settings_launcher_debug">Лог лаунчера</string>
-    <string name="settings_launcher_upgrade">Оновлення лаунчера</string>
-    <string name="settings_launcher_upgrade_check">Перевірити</string>
     <string name="settings_launcher_download">Завантаження</string>
     <string name="settings_launcher_download_threads">Потоки</string>
     <string name="settings_launcher_download_threads_auto">Автоматично визначати</string>
@@ -763,18 +760,12 @@
     <string name="style_rocker_corner_radius">Радіус кутів стіка</string>
     <string name="style_rocker_fill_color">Колір заливки стіка</string>
     <string name="update">Оновити</string>
-    <string name="update_netdisk">Quark диск</string>
     <string name="update_check">Перевірити оновлення</string>
     <string name="update_checking">Перевірка оновлення</string>
     <string name="update_check_failed">Помилка під час перевірки оновлення</string>
     <string name="update_date">Дата: %s</string>
-    <string name="update_description">Опис: %s</string>
     <string name="update_exist">Нова версія</string>
-    <string name="update_failed">Не вдалося завантажити останню версію, спробуйте ще раз або завантажте її з офіційного сайту.</string>
-    <string name="update_ignore">Ігнорувати</string>
-    <string name="update_launcher">Оновлення лаунчера</string>
     <string name="update_not_exist">Немає доступних оновлень</string>
-    <string name="update_type">Тип: %s</string>
     <string name="update_version">Версія %s</string>
     <string name="update_version_release">Реліз</string>
     <string name="update_version_beta">Бета</string>
@@ -953,7 +944,4 @@
     <string name="renderer_source">Джерело:</string>
     <string name="renderer_source_builtin">Вбудований</string>
     <string name="animation_idle">Стояння</string>
-    <string name="animation_idle_variant_1">Стояння 1</string>
-    <string name="animation_idle_variant_2">Стояння 2</string>
-    <string name="animation_idle_variant_3">Стояння 3</string>
 </resources>

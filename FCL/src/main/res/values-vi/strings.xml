@@ -864,10 +864,8 @@
     <string name="settings_fcl_graphics_backend">Backend Đồ họa (chỉ có hiệu lực cho 26.2+)</string>
     <string name="settings_fcl_renderer">Triển khai OpenGL (Trình kết xuất)</string>
     <string name="settings_fcl_renderer_gl4es" translatable="false">Holy GL4ES (OpenGL 2.1, 1.21.5-)</string>
-    <string name="settings_fcl_renderer_virgl" translatable="false">VirGLRenderer (OpenGL 4.3)</string>
     <string name="settings_fcl_renderer_vgpu">VGPU (OpenGL 2.1+)</string>
     <string name="settings_fcl_renderer_zink" translatable="false">Kopper Zink (OpenGL 4.6)</string>
-    <string name="settings_fcl_renderer_freedreno">Freedreno (OpenGL 4.6, chỉ hỗ trợ adreno616-660)</string>
     <string name="settings_fcl_renderer_nggl4es">Krypton Wrapper (OpenGL 3.1+)</string>
     <string name="settings_fcl_driver">Trình điều khiển Vulkan</string>
     <string name="settings_download_netdisk">Netdisk (Được đề xuất cho người dùng ở Trung Quốc)</string>
@@ -884,8 +882,6 @@
     <string name="settings_launcher_request">Yêu cầu</string>
     <string name="settings_launcher_debug">Gỡ lỗi</string>
     <string name="settings_launcher_request_recording_permission">Yêu cầu quyền ghi âm (cho mod trò chuyện thoại)</string>
-    <string name="settings_launcher_upgrade">Cập nhật Trình khởi chạy</string>
-    <string name="settings_launcher_upgrade_check">Kiểm tra</string>
     <string name="settings_launcher_download">Tải xuống</string>
     <string name="settings_launcher_download_threads">Luồng</string>
     <string name="settings_launcher_download_threads_auto">Tự động Xác định</string>
@@ -1047,18 +1043,12 @@
     <string name="terracotta_tutorial_guest_btn">Hướng dẫn Khách</string>
     <string name="terracotta_tutorial_guest">Hướng dẫn Khách:\n\n - Đọc thông báo người dùng trên trang chủ nhiều người chơi của trình khởi chạy, sau đó bật chức năng nhiều người chơi.\n - Khởi chạy trò chơi, tìm menu nhiều người chơi trong menu FCL trong trò chơi và mở nó.\n - Nhấp vào Tôi muốn tham gia một phiên, nhập mã mời do chủ phòng cung cấp vào ô nhập và kiên nhẫn chờ đợi.\n - Nếu cửa sổ bật lên yêu cầu quyền VPN, vui lòng cấp; nếu không, nó sẽ không hoạt động bình thường.\n - Sau khi hiển thị bạn đã tham gia phòng, hãy chọn Nhiều người chơi và nhấp đúp vào Terracotta Lobby.\n\nLưu ý:\n\n - Phần mềm này hỗ trợ tài khoản ngoại tuyến.\n - Phần mềm này hỗ trợ kết nối với các phần mềm hỗ trợ giao thức Scaffolding, chẳng hạn như HMCL và PCL CE.\n - Khi tham gia trò chơi bằng địa chỉ máy chủ dự phòng, tài khoản ngoại tuyến không được hỗ trợ. Vui lòng tự giải quyết vấn đề này.</string>
     <string name="update">Cập nhật</string>
-    <string name="update_netdisk">Netdisk</string>
     <string name="update_check">Kiểm tra Cập nhật</string>
     <string name="update_checking">Đang kiểm tra Cập nhật</string>
     <string name="update_check_failed">Kiểm tra cập nhật thất bại</string>
     <string name="update_date">Ngày: %s</string>
-    <string name="update_description">Mô tả:\n%s</string>
     <string name="update_exist">Đã phát hiện phiên bản có thể cập nhật</string>
-    <string name="update_failed">Không thể tải xuống phiên bản mới nhất, vui lòng thử lại hoặc tải xuống từ trang web chính thức.</string>
-    <string name="update_ignore">Bỏ qua phiên bản này</string>
-    <string name="update_launcher">Đang cập nhật trình khởi chạy</string>
     <string name="update_not_exist">Không có bản cập nhật nào</string>
-    <string name="update_type">Loại: %s</string>
     <string name="update_version">Phiên bản: %s</string>
     <string name="update_version_release">Phát hành</string>
     <string name="update_version_beta">Beta</string>
@@ -1222,7 +1212,4 @@
     <string name="create_account_first">Vui lòng tạo tài khoản trò chơi trước khi khởi động</string>
     <string name="version_list_refreshing">Đang lấy danh sách phiên bản từ xa…</string>
     <string name="animation_idle">Đứng yên</string>
-    <string name="animation_idle_variant_1">Đứng yên 1</string>
-    <string name="animation_idle_variant_2">Đứng yên 2</string>
-    <string name="animation_idle_variant_3">Đứng yên 3</string>
 </resources>

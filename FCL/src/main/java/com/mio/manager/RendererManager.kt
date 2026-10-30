@@ -13,10 +13,8 @@ object RendererManager {
     private const val MOBILEGL_LIB = "libMobileGL.so"
 
     lateinit var RENDERER_GL4ES: Renderer
-    lateinit var RENDERER_VIRGL: Renderer
     lateinit var RENDERER_VGPU: Renderer
     lateinit var RENDERER_ZINK: Renderer
-    lateinit var RENDERER_FREEDRENO: Renderer
     lateinit var RENDERER_NGGL4ES: Renderer
     lateinit var RENDERER_MOBILEGLUES: Renderer
     lateinit var RENDERER_MOBILEGL: Renderer
@@ -48,19 +46,6 @@ object RendererManager {
             "1.21.4"
         )
 
-        RENDERER_VIRGL = Renderer(
-            "VirGLRenderer",
-            context.getString(R.string.settings_fcl_renderer_virgl),
-            "libOSMesa_81.so",
-            "libEGL.so",
-            "",
-            null,
-            null,
-            Renderer.ID_VIRGL,
-            "",
-            "26.3-snapshot-3",
-            displayMaxMCver = "26.2"
-        )
 
         RENDERER_VGPU = Renderer(
             "VGPU",
@@ -89,19 +74,6 @@ object RendererManager {
             displayMaxMCver = "26.2"
         )
 
-        RENDERER_FREEDRENO = Renderer(
-            "Freedreno",
-            context.getString(R.string.settings_fcl_renderer_freedreno),
-            "libOSMesa_8.so",
-            "libEGL.so",
-            "",
-            null,
-            null,
-            Renderer.ID_FREEDRENO,
-            "",
-            "26.3-snapshot-3",
-            displayMaxMCver = "26.2"
-        )
 
         RENDERER_NGGL4ES = Renderer(
             "Krypton Wrapper",
@@ -162,10 +134,8 @@ object RendererManager {
         if (canUseMobileGL()) rendererList.add(RENDERER_MOBILEGL)
         rendererList.add(RENDERER_NGGL4ES)
         rendererList.add(RENDERER_GL4ES)
-        rendererList.add(RENDERER_VIRGL)
         rendererList.add(RENDERER_VGPU)
         rendererList.add(RENDERER_ZINK)
-        rendererList.add(RENDERER_FREEDRENO)
         rendererList.addAll(RendererPlugin.rendererList)
     }
 

@@ -26,10 +26,14 @@ import com.tungsten.fclauncher.utils.MobileGluesConfig;
 import com.tungsten.fclcore.util.Logging;
 
 import java.io.BufferedReader;
+import java.io.DataInputStream;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -37,6 +41,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.logging.Level;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 public class FCLauncher {
 
@@ -210,6 +217,10 @@ public class FCLauncher {
         envMap.put("FCL_NATIVEDIR", config.getContext().getApplicationInfo().nativeLibraryDir);
         envMap.put("POJAV_NATIVEDIR", config.getContext().getApplicationInfo().nativeLibraryDir);
         envMap.put("DRIVER_PATH", DriverPlugin.getSelected().getPath());
+        // 自定义驱动加载参数：linkerhook 按 DRIVER_LIB 加载驱动库（Turnip/panvk 等），
+        // GPU 门控按 DRIVER_GPU 判定家族（adreno/mali/any）
+        envMap.put("DRIVER_LIB", DriverPlugin.getSelected().getLib());
+        envMap.put("DRIVER_GPU", DriverPlugin.getSelected().getGpu());
         envMap.put("TMPDIR", config.getContext().getCacheDir().getAbsolutePath());
         envMap.put("PATH", config.getJavaPath() + "/bin:" + Os.getenv("PATH"));
         envMap.put("LD_LIBRARY_PATH", getLibraryPath(config.getContext(), config.getRenderer().getPath(), config.getLwjglVersion()));
@@ -349,6 +360,18 @@ public class FCLauncher {
                     }
                 });
             }
+            // 运行时才能确定的路径类 env 补全：只补缺，不覆盖插件显式设置的值
+            if (!envMap.containsKey("MESA_GLSL_CACHE_DIR")) {
+                envMap.put("MESA_GLSL_CACHE_DIR", config.getContext().getCacheDir().getAbsolutePath());
+            }
+            if ("gallium_virgl".equals(envMap.get("POJAV_RENDERER")) && !envMap.containsKey("VTEST_SOCKET_NAME")) {
+                envMap.put("VTEST_SOCKET_NAME", new File(config.getContext().getCacheDir(), ".virgl_test").getAbsolutePath());
+            }
+            // 插件目录内带 virgl test server 时交给原生侧从该绝对路径加载（原生默认只在主 APK 目录找）
+            File vts = new File(rendererLibPath(renderer), "libvirgl_test_server.so");
+            if (vts.isFile()) {
+                envMap.put("VIRGL_TEST_SERVER", vts.getAbsolutePath());
+            }
             return;
         }
         if (renderer.isEqual(Renderer.ID_GL4ES) || renderer.isEqual(Renderer.ID_VGPU)) {
@@ -387,22 +410,17 @@ public class FCLauncher {
             // 指向 FCL 自己的应用目录后不再需要额外的存储权限
             envMap.put("MG_DIR_PATH", MobileGluesConfig.ensureDir(config.getContext()));
         } else {
-            envMap.put("MESA_GLSL_CACHE_DIR", config.getContext().getCacheDir().getAbsolutePath());
-            envMap.put("MESA_GL_VERSION_OVERRIDE", renderer.isEqual(Renderer.ID_VIRGL) ? "4.3" : "4.6");
-            envMap.put("MESA_GLSL_VERSION_OVERRIDE", renderer.isEqual(Renderer.ID_VIRGL) ? "430" : "460");
-            envMap.put("force_glsl_extensions_warn", "true");
-            envMap.put("allow_higher_compat_version", "true");
-            envMap.put("allow_glsl_extension_directive_midshader", "true");
-            envMap.put("VTEST_SOCKET_NAME", new File(config.getContext().getCacheDir().getAbsolutePath(), ".virgl_test").getAbsolutePath());
-            if (renderer.isEqual(Renderer.ID_VIRGL)) {
-                envMap.put("POJAV_RENDERER", "gallium_virgl");
-                envMap.put("OSMESA_NO_FLUSH_FRONTBUFFER", "1");
-            } else if (renderer.isEqual(Renderer.ID_ZINK)) {
+            // VirGL/Freedreno 已剥离为插件（走上方提前返回）；此分支只剩 ZINK
+            if (renderer.isEqual(Renderer.ID_ZINK)) {
+                envMap.put("MESA_GLSL_CACHE_DIR", config.getContext().getCacheDir().getAbsolutePath());
+                envMap.put("MESA_GL_VERSION_OVERRIDE", "4.6");
+                envMap.put("MESA_GLSL_VERSION_OVERRIDE", "460");
+                envMap.put("force_glsl_extensions_warn", "true");
+                envMap.put("allow_higher_compat_version", "true");
+                envMap.put("allow_glsl_extension_directive_midshader", "true");
                 envMap.put("POJAV_RENDERER", "opengles3_desktopgl_zink_kopper");
                 envMap.put("LIBGL_ES", "3");
                 envMap.put("POJAVEXEC_EGL", renderer.getEglName());
-            } else if (renderer.isEqual(Renderer.ID_FREEDRENO)) {
-                envMap.put("POJAV_RENDERER", "gallium_freedreno");
             }
         }
     }
@@ -435,6 +453,14 @@ public class FCLauncher {
             }
         }
 
+    }
+
+    private static byte[] readFileBytes(File file) throws IOException {
+        byte[] data = new byte[(int) file.length()];
+        try (DataInputStream in = new DataInputStream(new FileInputStream(file))) {
+            in.readFully(data);
+        }
+        return data;
     }
 
     private static void setUpJavaRuntime(FCLConfig config, FCLBridge bridge) throws IOException {

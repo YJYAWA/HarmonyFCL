@@ -9,12 +9,14 @@ import kotlin.math.min
 /**
  * 体素化第二层网格（复刻 3D Skin Layers 的 SolidPixelWrapper，同 Axolotl 实现）：
  * 第二层每个全不透明像素（alpha=255）生成一个六面贴图的真实立方体，相邻不透明
- * 体素之间做面剔除，替换 GLTF 的零厚度面片层，使第二层边缘实心化；
- * 半透明像素不体素化，由 GLTF 面片呈现（体素立方体间带重叠，半透明时会二次混合成条纹）。
+ * 体素之间做面剔除，使第二层实心化；半透明像素不体素化，由调用方的零厚度面片
+ * 第二遍呈现（体素立方体间带重叠，半透明时会二次混合成条纹）。
  *
- * 体素构建于网格局部空间（与 GLTF 网格顶点同空间，Blockbench 的 Y 向下约定，
- * 面命名沿用 3D Skin Layers：down/up/north/south/west/east，UV 锚点记录时对
- * 上下/东西做轴向翻转）。立方体间留微量重叠（epsilon）消除接缝；UV 内缩
+ * 体素构建于 [rebuild] 的 bounds 给定的部件局部空间（第二层盒子的包围盒；空间
+ * 约定沿 GLTF 资产的网格顶点空间：y 与部件局部空间同向，x/z 反向——面命名沿用
+ * 3D Skin Layers 的 down/up/north/south/west/east，UV 锚点记录时对上下/东西做
+ * 轴向翻转），绘制方须在部件矩阵后补 rotY(180°) 对齐（同 GLTF 资产的
+ * blockbench_export 节点旋转）。立方体间留微量重叠（epsilon）消除接缝；UV 内缩
  * 1/4096 像素防止 NEAREST 采样渗色。顶点带面法线，片元侧做简易方向光照。
  * 所有 GL 调用须在渲染线程执行。
  */
